@@ -94,16 +94,29 @@ def test_coinbase_gap_triggers_snapshot_resync() -> None:
     assert adapter.gap_count == 1
 
 
-def test_gemini_gap_triggers_snapshot_resync() -> None:
+def test_gemini_first_v2_message_triggers_rest_snapshot() -> None:
+    # Gemini v2 socket_sequence is connection-global (not per-symbol), so the adapter
+    # fetches a REST snapshot on the first WS message for each pair instead of
+    # relying on socket_sequence for gap detection.
     adapter = GeminiAdapter(["btcusd"])
     _stub_snapshot(adapter)
-    # Snapshot establishes baseline sequence 1.
-    asyncio.run(adapter.parse_message('{"symbol":"btcusd","lastUpdateId":1,"bids":[["100","1"]],"asks":[["101","2"]]}'))
-    # Skip sequence 2.
-    events = asyncio.run(adapter.parse_message('{"symbol":"btcusd","socket_sequence":3,"events":[{"side":"bid","price":"99","remaining":"1"}]}'))
+    events = asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["buy","100","1"],["sell","101","2"]]}'))
     assert len(events) == 1
     assert events[0].kind is EventKind.SNAPSHOT
-    assert adapter.gap_count == 1
+
+
+def test_gemini_subsequent_v2_messages_are_sequential_deltas() -> None:
+    adapter = GeminiAdapter(["btcusd"])
+    _stub_snapshot(adapter)
+    # First message → REST snapshot.
+    asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["buy","100","1"],["sell","101","2"]]}'))
+    # Second and third messages → sequential DELTAs, no gap triggered.
+    e2 = asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["buy","100","1"]]}'))
+    e3 = asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["sell","101","1"]]}'))
+    assert e2[0].kind is EventKind.DELTA
+    assert e3[0].kind is EventKind.DELTA
+    assert e3[0].sequence == e2[0].sequence + 1
+    assert adapter.gap_count == 0
 
 
 def test_out_of_order_delta_is_dropped_silently() -> None:
