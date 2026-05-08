@@ -19,7 +19,7 @@ def normalize_binance_symbol(symbol: str) -> str:
 class BinanceAdapter(ExchangeAdapter):
     name = "binance"
     ws_url = "wss://stream.binance.us:9443/ws"
-    snapshot_url = "https://api.binance.com/api/v3/depth"
+    snapshot_url = "https://api.binance.us/api/v3/depth"
 
     async def subscribe(self, websocket: Any) -> None:
         params = [f"{pair.lower()}@depth" for pair in self.pairs]
