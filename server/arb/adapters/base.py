@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+import abc
+import asyncio
+import json
+import logging
+import random
+import time
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+
+try:
+    import structlog
+except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
+    class _StructlogFallback:
+        @staticmethod
+        def get_logger(name: str) -> logging.Logger:
+            return logging.getLogger(name)
+
+    structlog = _StructlogFallback()  # type: ignore[assignment]
+
+from arb.metrics import adapter_reconnects_total
+from arb.types import EventKind, MarketEvent
+
+logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class AdapterStatusSnapshot:
+    exchange: str
+    connected: bool
+    last_message_age_ms: int | None
+    gap_count: int
+    reconnect_count: int
+    last_error: str | None
+
+    def as_payload(self) -> dict[str, str | int | bool | None]:
+        return {
+            "exchange": self.exchange,
+            "connected": self.connected,
+            "last_message_age_ms": self.last_message_age_ms,
+            "gap_count": self.gap_count,
+            "reconnect_count": self.reconnect_count,
+            "last_error": self.last_error,
+        }
+
+
+class ExchangeAdapter(abc.ABC):
+    name: str
+    ws_url: str
+    snapshot_url: str
+
+    def __init__(self, pairs: list[str]) -> None:
+        self.pairs = pairs
+        self.connected = False
+        self.last_message_ns: int | None = None
+        self.gap_count = 0
+        self.reconnect_count = 0
+        self.last_error: str | None = None
+        self._last_sequence_by_pair: dict[str, int] = {}
+
+    @abc.abstractmethod
+    async def subscribe(self, websocket: Any) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    async def parse_message(self, message: str) -> list[MarketEvent]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    async def fetch_snapshot(self, pair: str, trigger_sequence: int) -> MarketEvent:
+        raise NotImplementedError
+
+    async def connect(self) -> AsyncIterator[MarketEvent]:
+        import websockets
+
+        backoff = 1.0
+        while True:
+            try:
+                async with websockets.connect(self.ws_url) as websocket:
+                    self.connected = True
+                    self.last_error = None
+                    await self.subscribe(websocket)
+                    backoff = 1.0
+                    async for message in websocket:
+                        self.last_message_ns = time.time_ns()
+                        text_message = message.decode() if isinstance(message, bytes) else message
+                        for event in await self.parse_message(text_message):
+                            yield event
+            except Exception as exc:  # pragma: no cover - reconnect path
+                self.connected = False
+                self.last_error = str(exc)
+                self.reconnect_count += 1
+                adapter_reconnects_total.labels(exchange=self.name, reason=type(exc).__name__).inc()
+                logger.warning("adapter_reconnect", exchange=self.name, reason=str(exc))
+                await asyncio.sleep(backoff + random.uniform(0, 0.5))
+                backoff = min(backoff * 2, 30.0)
+            finally:
+                self.connected = False
+
+    @staticmethod
+    def encode(payload: dict[str, Any]) -> str:
+        return json.dumps(payload)
+
+    async def client_get_json(self, url: str) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()  # type: ignore[no-any-return]
+
+    async def finalize_events(self, events: list[MarketEvent]) -> list[MarketEvent]:
+        finalized: list[MarketEvent] = []
+        for event in events:
+            if event.kind is not EventKind.DELTA:
+                self._last_sequence_by_pair[event.pair] = event.sequence
+                finalized.append(event)
+                continue
+
+            last_sequence = self._last_sequence_by_pair.get(event.pair)
+            if last_sequence is None:
+                self.gap_count += 1
+                snapshot = await self.fetch_snapshot(event.pair, event.sequence)
+                self._last_sequence_by_pair[event.pair] = snapshot.sequence
+                finalized.append(snapshot)
+                continue
+
+            if event.sequence <= last_sequence:
+                continue
+
+            if event.sequence != last_sequence + 1:
+                self.gap_count += 1
+                snapshot = await self.fetch_snapshot(event.pair, event.sequence)
+                self._last_sequence_by_pair[event.pair] = snapshot.sequence
+                finalized.append(snapshot)
+                continue
+
+            self._last_sequence_by_pair[event.pair] = event.sequence
+            finalized.append(event)
+        return finalized
+
+    def status_snapshot(self, now_ns: int | None = None) -> AdapterStatusSnapshot:
+        current_ns = time.time_ns() if now_ns is None else now_ns
+        age_ms = None
+        if self.last_message_ns is not None:
+            age_ms = max(0, (current_ns - self.last_message_ns) // 1_000_000)
+        return AdapterStatusSnapshot(
+            exchange=self.name,
+            connected=self.connected,
+            last_message_age_ms=age_ms,
+            gap_count=self.gap_count,
+            reconnect_count=self.reconnect_count,
+            last_error=self.last_error,
+        )

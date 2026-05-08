@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" fill="none">
+  <rect width="1200" height="640" fill="#F7F1E6"/>
+  <rect x="60" y="70" width="180" height="80" rx="20" fill="#FFF8ED" stroke="#A16207" stroke-width="2"/>
+  <text x="150" y="102" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#1F2937">Gemini</text>
+  <text x="150" y="128" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">Public WebSocket</text>
+  <rect x="60" y="180" width="180" height="80" rx="20" fill="#FFF8ED" stroke="#A16207" stroke-width="2"/>
+  <text x="150" y="212" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#1F2937">Coinbase</text>
+  <text x="150" y="238" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">Public WebSocket</text>
+  <rect x="60" y="290" width="180" height="80" rx="20" fill="#FFF8ED" stroke="#A16207" stroke-width="2"/>
+  <text x="150" y="322" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#1F2937">Binance</text>
+  <text x="150" y="348" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">Public WebSocket</text>
+
+  <rect x="320" y="110" width="220" height="220" rx="24" fill="#FFFFFF" stroke="#D6D3D1" stroke-width="2"/>
+  <text x="430" y="150" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#1F2937">Exchange Adapters</text>
+  <text x="430" y="182" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">normalize symbols</text>
+  <text x="430" y="208" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">reconnect with jitter</text>
+  <text x="430" y="234" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">REST snapshot resync on gap</text>
+  <text x="430" y="260" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">emit MarketEvent objects</text>
+
+  <rect x="620" y="70" width="240" height="120" rx="24" fill="#FFFFFF" stroke="#D6D3D1" stroke-width="2"/>
+  <text x="740" y="114" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#1F2937">OrderBookManager</text>
+  <text x="740" y="144" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">in-memory L2 books</text>
+  <text x="740" y="168" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">gap / crossed-book handling</text>
+
+  <rect x="620" y="230" width="240" height="120" rx="24" fill="#FFFFFF" stroke="#D6D3D1" stroke-width="2"/>
+  <text x="740" y="274" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#1F2937">ArbitrageDetector</text>
+  <text x="740" y="304" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">cross-venue best bid / ask</text>
+  <text x="740" y="328" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">spread %, size, theoretical profit</text>
+
+  <rect x="940" y="90" width="200" height="100" rx="24" fill="#FFFFFF" stroke="#D6D3D1" stroke-width="2"/>
+  <text x="1040" y="128" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#1F2937">SQLite</text>
+  <text x="1040" y="154" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">batched async writes</text>
+
+  <rect x="940" y="230" width="200" height="100" rx="24" fill="#FFFFFF" stroke="#D6D3D1" stroke-width="2"/>
+  <text x="1040" y="268" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#1F2937">FastAPI</text>
+  <text x="1040" y="294" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">REST + WebSocket + metrics</text>
+
+  <rect x="940" y="390" width="200" height="100" rx="24" fill="#FFFFFF" stroke="#D6D3D1" stroke-width="2"/>
+  <text x="1040" y="428" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#1F2937">React Dashboard</text>
+  <text x="1040" y="454" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">spreads, feed, stats, health</text>
+
+  <rect x="620" y="400" width="240" height="100" rx="24" fill="#FFF8ED" stroke="#A16207" stroke-width="2"/>
+  <text x="740" y="438" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#1F2937">Snapshot Reconciler</text>
+  <text x="740" y="464" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#6B7280">periodic REST vs live-book diff</text>
+
+  <path d="M240 110H320" stroke="#A16207" stroke-width="3"/>
+  <path d="M240 220H320" stroke="#A16207" stroke-width="3"/>
+  <path d="M240 330H320" stroke="#A16207" stroke-width="3"/>
+  <path d="M540 180H620" stroke="#A16207" stroke-width="3"/>
+  <path d="M740 190V230" stroke="#A16207" stroke-width="3"/>
+  <path d="M860 290H940" stroke="#A16207" stroke-width="3"/>
+  <path d="M860 150H940" stroke="#A16207" stroke-width="3"/>
+  <path d="M1040 330V390" stroke="#A16207" stroke-width="3"/>
+  <path d="M740 350V400" stroke="#A16207" stroke-width="3"/>
+</svg>
