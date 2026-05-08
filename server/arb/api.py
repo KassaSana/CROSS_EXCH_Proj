@@ -4,6 +4,7 @@ import time
 from collections.abc import Iterable
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
@@ -62,6 +63,12 @@ def create_app(
     expected_pairs: Iterable[tuple[str, str]] = (),
 ) -> FastAPI:
     app = FastAPI(title="Cross-Exchange Arbitrage Detector")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     adapter_list = list(adapters)
     tracked_pairs = list(expected_pairs)
 
