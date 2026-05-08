@@ -41,22 +41,27 @@ export type TopOfBook = {
   timestamp_ns: number;
 };
 
+const API_BASE = import.meta.env.VITE_API_URL ?? "https://arb-detector-api.onrender.com";
+const WS_BASE = API_BASE.replace(/^http/, "ws");
+
+export { WS_BASE };
+
 export async function fetchRecentOpportunities(): Promise<Opportunity[]> {
-  const response = await fetch("/api/opportunities/recent?limit=50");
+  const response = await fetch(`${API_BASE}/api/opportunities/recent?limit=50`);
   return response.json();
 }
 
 export async function fetchStats(): Promise<Stats> {
-  const response = await fetch("/api/stats?window=1h");
+  const response = await fetch(`${API_BASE}/api/stats?window=1h`);
   return response.json();
 }
 
 export async function fetchPairs(): Promise<PairRecord[]> {
-  const response = await fetch("/api/pairs");
+  const response = await fetch(`${API_BASE}/api/pairs`);
   return response.json();
 }
 
 export async function fetchAdapterStatus(): Promise<AdapterStatus[]> {
-  const response = await fetch("/api/adapters");
+  const response = await fetch(`${API_BASE}/api/adapters`);
   return response.json();
 }
