@@ -71,16 +71,31 @@ class GeminiAdapter(ExchangeAdapter):
                 asks=asks,
             )])
 
-        # v1-style fallback (legacy shape)
+        # v1-style snapshot (bids/asks as list-of-lists)
         if "bids" in payload and "asks" in payload:
             return await self.finalize_events([MarketEvent(
                 exchange=self.name,
                 pair=normalize_gemini_symbol(payload.get("symbol", self.pairs[0])),
                 kind=EventKind.SNAPSHOT,
-                sequence=int(payload.get("socket_sequence", 0)),
+                sequence=int(payload.get("socket_sequence", payload.get("lastUpdateId", 0))),
                 timestamp_ns=time.time_ns(),
                 bids=tuple(PriceLevel(price=Decimal(p), size=Decimal(s)) for p, s in payload["bids"]),
                 asks=tuple(PriceLevel(price=Decimal(p), size=Decimal(s)) for p, s in payload["asks"]),
+            )])
+
+        # v1-style delta (events array with side/price/remaining)
+        if "events" in payload and "symbol" in payload:
+            pair = normalize_gemini_symbol(payload["symbol"])
+            bids = tuple(PriceLevel(price=Decimal(e["price"]), size=Decimal(e["remaining"])) for e in payload["events"] if e["side"] == "bid")
+            asks = tuple(PriceLevel(price=Decimal(e["price"]), size=Decimal(e["remaining"])) for e in payload["events"] if e["side"] == "ask")
+            return await self.finalize_events([MarketEvent(
+                exchange=self.name,
+                pair=pair,
+                kind=EventKind.DELTA,
+                sequence=int(payload.get("socket_sequence", 0)),
+                timestamp_ns=time.time_ns(),
+                bids=bids,
+                asks=asks,
             )])
 
         return []
