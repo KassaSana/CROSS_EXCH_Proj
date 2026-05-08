@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 from arb.config import load_config
 
-
 VALID_CONFIG = """
 [detector]
 threshold_pct = 0.25
