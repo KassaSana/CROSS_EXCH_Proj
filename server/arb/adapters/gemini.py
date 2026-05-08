@@ -22,7 +22,7 @@ class GeminiAdapter(ExchangeAdapter):
 
     async def subscribe(self, websocket: Any) -> None:
         # Gemini v2 API: subscribe to l2 channel with normalized symbols.
-        symbols = [pair.lower().replace("-", "") for pair in self.pairs]
+        symbols = [pair.upper().replace("-", "") for pair in self.pairs]
         await websocket.send(self.encode({
             "type": "subscribe",
             "subscriptions": [{"name": "l2", "symbols": symbols}],
