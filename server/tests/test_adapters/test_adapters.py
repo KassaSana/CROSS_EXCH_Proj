@@ -42,29 +42,20 @@ def test_gemini_snapshot_parsing() -> None:
     assert events[0].pair == "BTC-USD"
 
 
-def test_binance_gap_triggers_snapshot_resync() -> None:
+def test_binance_subsequent_deltas_are_sequential() -> None:
+    # Binance depth deltas carry [U, u] ranges where u jumps by >1 between
+    # messages. The adapter assigns its own monotonic sequence so non-contiguous
+    # u values do not trigger false gaps / snapshot resyncs.
     adapter = BinanceAdapter(["BTCUSDT"])
-
-    async def fetch_snapshot(self: BinanceAdapter, pair: str, trigger_sequence: int) -> MarketEvent:
-        return MarketEvent(
-            exchange=self.name,
-            pair=pair,
-            kind=EventKind.SNAPSHOT,
-            sequence=trigger_sequence,
-            timestamp_ns=1,
-            bids=(PriceLevel(price=Decimal("100"), size=Decimal("1")),),
-            asks=(PriceLevel(price=Decimal("101"), size=Decimal("1")),),
-        )
-
-    adapter.fetch_snapshot = types.MethodType(fetch_snapshot, adapter)
-
+    _stub_snapshot(adapter)
+    # First message via REST-shape snapshot establishes baseline.
     asyncio.run(adapter.parse_message('{"symbol":"BTCUSDT","lastUpdateId":1,"bids":[["100","1"]],"asks":[["101","2"]]}'))
-    events = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":3,"E":123,"b":[["100","1"]],"a":[["101","2"]]}'))
-
-    assert len(events) == 1
-    assert events[0].kind is EventKind.SNAPSHOT
-    assert events[0].sequence == 3
-    assert adapter.gap_count == 1
+    # Two depth deltas with non-contiguous u values must both be accepted as DELTAs.
+    e1 = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":50,"U":40,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
+    e2 = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":120,"U":51,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
+    assert e1[0].kind is EventKind.DELTA
+    assert e2[0].kind is EventKind.DELTA
+    assert e2[0].sequence == e1[0].sequence + 1
 
 
 def _stub_snapshot(adapter: object, sequence: int = 0) -> None:
@@ -119,34 +110,48 @@ def test_gemini_subsequent_v2_messages_are_sequential_deltas() -> None:
     assert adapter.gap_count == 0
 
 
-def test_out_of_order_delta_is_dropped_silently() -> None:
+def test_binance_subsequent_messages_dont_trigger_rest_calls() -> None:
+    # Regression: previously every WS message triggered a REST snapshot fetch
+    # because Binance's u field jumps by >1. This is the bug that flooded /depth.
     adapter = BinanceAdapter(["BTCUSDT"])
-    _stub_snapshot(adapter)
-    asyncio.run(adapter.parse_message('{"symbol":"BTCUSDT","lastUpdateId":5,"bids":[["100","1"]],"asks":[["101","2"]]}'))
-    # Delta with sequence == last is older — must be dropped, not re-snapshot.
-    events = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":4,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
-    assert events == []
-    assert adapter.gap_count == 0
+    fetch_calls = 0
+
+    async def counting_fetch(self: BinanceAdapter, pair: str, trigger_sequence: int) -> MarketEvent:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return MarketEvent(
+            exchange=self.name, pair=pair, kind=EventKind.SNAPSHOT,
+            sequence=100, timestamp_ns=1,
+            bids=(PriceLevel(price=Decimal("100"), size=Decimal("1")),),
+            asks=(PriceLevel(price=Decimal("101"), size=Decimal("1")),),
+        )
+
+    adapter.fetch_snapshot = types.MethodType(counting_fetch, adapter)
+    # First WS message → 1 REST snapshot. Subsequent → 0.
+    asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":50,"U":40,"E":1,"b":[["100","1"]],"a":[]}'))
+    asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":120,"U":51,"E":1,"b":[["100","1"]],"a":[]}'))
+    asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":300,"U":121,"E":1,"b":[["100","1"]],"a":[]}'))
+    assert fetch_calls == 1
 
 
 def test_first_delta_with_no_prior_baseline_triggers_snapshot() -> None:
     adapter = BinanceAdapter(["BTCUSDT"])
     _stub_snapshot(adapter)
-    # No snapshot yet — first delta must request one.
-    events = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":7,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
+    # No snapshot yet — first delta must fetch a REST snapshot before accepting deltas.
+    events = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":7,"U":1,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
     assert len(events) == 1
     assert events[0].kind is EventKind.SNAPSHOT
-    assert adapter.gap_count == 1
 
 
 def test_sequential_deltas_pass_through_without_snapshot() -> None:
     adapter = BinanceAdapter(["BTCUSDT"])
     _stub_snapshot(adapter)
     asyncio.run(adapter.parse_message('{"symbol":"BTCUSDT","lastUpdateId":1,"bids":[["100","1"]],"asks":[["101","2"]]}'))
-    e2 = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":2,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
-    e3 = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":3,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
-    assert e2[0].kind is EventKind.DELTA and e2[0].sequence == 2
-    assert e3[0].kind is EventKind.DELTA and e3[0].sequence == 3
+    e2 = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":2,"U":2,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
+    e3 = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":3,"U":3,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
+    assert e2[0].kind is EventKind.DELTA
+    assert e3[0].kind is EventKind.DELTA
+    assert e3[0].sequence == e2[0].sequence + 1
     assert adapter.gap_count == 0
 
 
