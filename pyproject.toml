@@ -1,0 +1,54 @@
+[project]
+name = "cross-exchange-arb-detector"
+version = "0.1.0"
+description = "Cross-exchange crypto arbitrage detector with FastAPI backend and React dashboard"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "aiosqlite>=0.20.0",
+  "fastapi>=0.115.0",
+  "httpx>=0.27.0",
+  "structlog>=24.1.0",
+  "uvicorn>=0.30.0",
+  "websockets>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hypothesis>=6.0.0",
+  "mypy>=2.0.0",
+  "pre-commit>=4.6.0",
+  "prometheus-client>=0.25.0",
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "pytest-cov>=7.1.0",
+  "ruff>=0.15.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["server"]
+testpaths = ["server/tests"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501", "UP042"]
+
+[tool.coverage.run]
+source = ["server/arb"]
+
+[tool.setuptools]
+package-dir = {"" = "server"}
+
+[tool.setuptools.packages.find]
+where = ["server"]

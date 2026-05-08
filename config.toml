@@ -1,0 +1,17 @@
+[detector]
+threshold_pct = 0.1
+
+[exchanges]
+gemini = ["btcusd", "ethusd", "solusd", "maticusd", "avaxusd", "linkusd", "ltcusd", "uniusd", "dotusd", "aaveusd"]
+coinbase = ["BTC-USD", "ETH-USD", "SOL-USD", "MATIC-USD", "AVAX-USD", "LINK-USD", "LTC-USD", "UNI-USD", "DOT-USD", "AAVE-USD"]
+binance = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "MATICUSDT", "AVAXUSDT", "LINKUSDT", "LTCUSDT", "UNIUSDT", "DOTUSDT", "AAVEUSDT"]
+
+[server]
+host = "0.0.0.0"
+port = 8000
+database_path = "arb.sqlite3"
+
+[persistence]
+batch_size = 500
+flush_interval_seconds = 1.0
+queue_maxsize = 10000

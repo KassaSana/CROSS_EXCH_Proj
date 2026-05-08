@@ -1,0 +1,187 @@
+from decimal import Decimal
+
+from arb.orderbook import OrderBookManager
+from arb.types import EventKind, MarketEvent, PriceLevel
+
+
+def event(
+    *,
+    kind: EventKind,
+    sequence: int,
+    bids: list[tuple[str, str]],
+    asks: list[tuple[str, str]],
+    exchange: str = "gemini",
+    pair: str = "BTC-USD",
+) -> MarketEvent:
+    return MarketEvent(
+        exchange=exchange,
+        pair=pair,
+        kind=kind,
+        sequence=sequence,
+        timestamp_ns=sequence,
+        bids=tuple(PriceLevel(price=Decimal(price), size=Decimal(size)) for price, size in bids),
+        asks=tuple(PriceLevel(price=Decimal(price), size=Decimal(size)) for price, size in asks),
+    )
+
+
+def test_snapshot_initializes_book() -> None:
+    manager = OrderBookManager()
+    result = manager.apply(
+        event(
+            kind=EventKind.SNAPSHOT,
+            sequence=100,
+            bids=[("100", "2"), ("99", "1")],
+            asks=[("101", "3"), ("102", "1")],
+        )
+    )
+    assert result.accepted is True
+    assert manager.best_bid("gemini", "BTC-USD") == Decimal("100")
+    assert manager.best_ask("gemini", "BTC-USD") == Decimal("101")
+
+
+def test_delta_updates_best_levels() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    result = manager.apply(event(kind=EventKind.DELTA, sequence=11, bids=[("100.5", "1.5")], asks=[]))
+    assert result.accepted is True
+    assert manager.best_bid("gemini", "BTC-USD") == Decimal("100.5")
+
+
+def test_size_zero_removes_level() -> None:
+    manager = OrderBookManager()
+    manager.apply(
+        event(
+            kind=EventKind.SNAPSHOT,
+            sequence=10,
+            bids=[("100", "2"), ("99", "1")],
+            asks=[("101", "3")],
+        )
+    )
+    manager.apply(event(kind=EventKind.DELTA, sequence=11, bids=[("100", "0")], asks=[]))
+    assert manager.best_bid("gemini", "BTC-USD") == Decimal("99")
+
+
+def test_out_of_order_delta_is_rejected() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    result = manager.apply(event(kind=EventKind.DELTA, sequence=10, bids=[("100.5", "1")], asks=[]))
+    assert result.accepted is False
+    assert result.reason == "out_of_order"
+
+
+def test_gap_detection_marks_book_stale() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    result = manager.apply(event(kind=EventKind.DELTA, sequence=12, bids=[("100.5", "1")], asks=[]))
+    assert result.accepted is False
+    assert result.reason == "sequence_gap"
+    assert manager.snapshot("gemini", "BTC-USD").stale is True
+
+
+def test_stale_book_blocks_new_deltas_until_snapshot() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    manager.apply(event(kind=EventKind.DELTA, sequence=12, bids=[("100.5", "1")], asks=[]))
+    result = manager.apply(event(kind=EventKind.DELTA, sequence=13, bids=[("100.7", "1")], asks=[]))
+    assert result.accepted is False
+    assert result.reason == "book_stale"
+
+
+def test_crossed_book_resets_book() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    result = manager.apply(event(kind=EventKind.DELTA, sequence=11, bids=[("102", "1")], asks=[]))
+    assert result.accepted is False
+    assert result.reason == "crossed_book"
+
+
+def test_cold_start_delta_is_rejected_until_snapshot() -> None:
+    manager = OrderBookManager()
+    result = manager.apply(event(kind=EventKind.DELTA, sequence=1, bids=[("100", "1")], asks=[("101", "1")]))
+    assert result.accepted is False
+    assert result.reason == "book_stale"
+    assert result.stale is True
+
+
+def test_recovery_after_gap_with_new_snapshot() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    # Trigger a gap.
+    manager.apply(event(kind=EventKind.DELTA, sequence=12, bids=[("100.5", "1")], asks=[]))
+    assert manager.snapshot("gemini", "BTC-USD").stale is True
+    # Recover with a fresh snapshot at the new sequence.
+    result = manager.apply(event(kind=EventKind.SNAPSHOT, sequence=20, bids=[("99", "1")], asks=[("100", "1")]))
+    assert result.accepted is True
+    assert manager.snapshot("gemini", "BTC-USD").stale is False
+    assert manager.best_bid("gemini", "BTC-USD") == Decimal("99")
+    assert manager.best_ask("gemini", "BTC-USD") == Decimal("100")
+
+
+def test_multiple_pairs_and_exchanges_are_isolated() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")], exchange="gemini", pair="BTC-USD"))
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("200", "1")], asks=[("201", "1")], exchange="coinbase", pair="ETH-USD"))
+    assert manager.best_bid("gemini", "BTC-USD") == Decimal("100")
+    assert manager.best_bid("coinbase", "ETH-USD") == Decimal("200")
+    assert manager.best_ask("coinbase", "BTC-USD") is None
+    assert manager.best_bid("gemini", "ETH-USD") is None
+
+
+def test_known_pairs_returns_all_seen_keys_sorted() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")], exchange="binance", pair="BTC-USD"))
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")], exchange="gemini", pair="BTC-USD"))
+    assert manager.known_pairs() == [("binance", "BTC-USD"), ("gemini", "BTC-USD")]
+
+
+def test_level_snapshot_returns_top_n_in_correct_order() -> None:
+    manager = OrderBookManager()
+    manager.apply(
+        event(
+            kind=EventKind.SNAPSHOT,
+            sequence=1,
+            bids=[("100", "1"), ("99", "1"), ("98", "1")],
+            asks=[("101", "1"), ("102", "1"), ("103", "1")],
+        )
+    )
+    levels = manager.level_snapshot("gemini", "BTC-USD", limit=2)
+    assert levels is not None
+    bids, asks = levels
+    assert [level.price for level in bids] == [Decimal("100"), Decimal("99")]
+    assert [level.price for level in asks] == [Decimal("101"), Decimal("102")]
+
+
+def test_level_snapshot_none_when_book_stale() -> None:
+    manager = OrderBookManager()
+    assert manager.level_snapshot("gemini", "BTC-USD") is None
+
+
+def test_top_of_book_none_when_empty_side() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[]))
+    assert manager.top_of_book("gemini", "BTC-USD") is None
+
+
+def test_size_zero_in_snapshot_does_not_create_level() -> None:
+    manager = OrderBookManager()
+    manager.apply(
+        event(
+            kind=EventKind.SNAPSHOT,
+            sequence=1,
+            bids=[("100", "1"), ("99", "0")],
+            asks=[("101", "1")],
+        )
+    )
+    assert manager.best_bid("gemini", "BTC-USD") == Decimal("100")
+    levels = manager.level_snapshot("gemini", "BTC-USD")
+    assert levels is not None
+    assert len(levels[0]) == 1
+
+
+def test_remove_nonexistent_level_is_noop() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")]))
+    # Removing a price level that doesn't exist must not crash or alter state.
+    result = manager.apply(event(kind=EventKind.DELTA, sequence=2, bids=[("50", "0")], asks=[]))
+    assert result.accepted is True
+    assert manager.best_bid("gemini", "BTC-USD") == Decimal("100")
