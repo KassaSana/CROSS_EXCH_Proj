@@ -10,9 +10,12 @@ from arb.types import EventKind, MarketEvent, PriceLevel
 
 
 def normalize_gemini_symbol(symbol: str) -> str:
-    base = symbol[:3].upper()
-    quote = symbol[3:].upper()
-    return f"{base}-{quote}"
+    s = symbol.upper()
+    if s.endswith("USDT"):
+        return f"{s[:-4]}-USD"
+    if s.endswith("USD"):
+        return f"{s[:-3]}-USD"
+    return s
 
 
 class GeminiAdapter(ExchangeAdapter):
@@ -20,8 +23,16 @@ class GeminiAdapter(ExchangeAdapter):
     ws_url = "wss://api.gemini.com/v2/marketdata"
     snapshot_url = "https://api.gemini.com/v1/book"
 
+    def __init__(self, pairs: list[str]) -> None:
+        super().__init__(pairs)
+        # Track which pairs have been initialized via REST snapshot.
+        # Gemini v2 socket_sequence is connection-level (not per-symbol), so we
+        # cannot use it for per-pair gap detection. Instead, fetch a REST snapshot
+        # on first WS message per pair and assign our own monotonic sequence.
+        self._initialized: set[str] = set()
+        self._pair_seq: dict[str, int] = {}
+
     async def subscribe(self, websocket: Any) -> None:
-        # Gemini v2 API: subscribe to l2 channel with normalized symbols.
         symbols = [pair.upper().replace("-", "") for pair in self.pairs]
         await websocket.send(self.encode({
             "type": "subscribe",
@@ -32,73 +43,56 @@ class GeminiAdapter(ExchangeAdapter):
         payload = json.loads(message)
         msg_type = payload.get("type")
 
-        # v2 API: initial full book snapshot
-        if msg_type == "l2_updates" and payload.get("changes") is None:
-            events: list[MarketEvent] = []
-            for update in payload.get("updates", [{}]):
-                symbol = update.get("symbol", "")
-                if not symbol:
-                    continue
-                pair = normalize_gemini_symbol(symbol)
-                bids = tuple(PriceLevel(price=Decimal(c[1]), size=Decimal(c[2])) for c in update.get("changes", []) if c[0] == "buy")
-                asks = tuple(PriceLevel(price=Decimal(c[1]), size=Decimal(c[2])) for c in update.get("changes", []) if c[0] == "sell")
-                events.append(MarketEvent(
-                    exchange=self.name,
-                    pair=pair,
-                    kind=EventKind.SNAPSHOT if update.get("type") == "initial" else EventKind.DELTA,
-                    sequence=int(payload.get("socket_sequence", 0)),
-                    timestamp_ns=time.time_ns(),
-                    bids=bids,
-                    asks=asks,
-                ))
-            return await self.finalize_events(events)
-
-        # v2 API: incremental updates
+        # v2 API: all book updates arrive as l2_updates with a "changes" array.
+        # Each entry is [side, price, quantity] where side is "buy" or "sell".
         if msg_type == "l2_updates":
             symbol = payload.get("symbol", "")
             if not symbol:
                 return []
             pair = normalize_gemini_symbol(symbol)
-            bids = tuple(PriceLevel(price=Decimal(c[1]), size=Decimal(c[2])) for c in payload.get("changes", []) if c[0] == "buy")
-            asks = tuple(PriceLevel(price=Decimal(c[1]), size=Decimal(c[2])) for c in payload.get("changes", []) if c[0] == "sell")
-            return await self.finalize_events([MarketEvent(
-                exchange=self.name,
-                pair=pair,
-                kind=EventKind.DELTA,
-                sequence=int(payload.get("socket_sequence", 0)),
-                timestamp_ns=time.time_ns(),
-                bids=bids,
-                asks=asks,
-            )])
+            changes = payload.get("changes", [])
+            bids = tuple(PriceLevel(price=Decimal(c[1]), size=Decimal(c[2])) for c in changes if c[0] == "buy")
+            asks = tuple(PriceLevel(price=Decimal(c[1]), size=Decimal(c[2])) for c in changes if c[0] == "sell")
+            return await self._emit(pair, bids, asks)
 
-        # v1-style snapshot (bids/asks as list-of-lists)
+        # v1-style snapshot (bids/asks as list-of-lists) — kept for test fixtures.
         if "bids" in payload and "asks" in payload:
-            return await self.finalize_events([MarketEvent(
-                exchange=self.name,
-                pair=normalize_gemini_symbol(payload.get("symbol", self.pairs[0])),
-                kind=EventKind.SNAPSHOT,
-                sequence=int(payload.get("socket_sequence", payload.get("lastUpdateId", 0))),
-                timestamp_ns=time.time_ns(),
-                bids=tuple(PriceLevel(price=Decimal(p), size=Decimal(s)) for p, s in payload["bids"]),
-                asks=tuple(PriceLevel(price=Decimal(p), size=Decimal(s)) for p, s in payload["asks"]),
-            )])
+            pair = normalize_gemini_symbol(payload.get("symbol", self.pairs[0]))
+            bids = tuple(PriceLevel(price=Decimal(p), size=Decimal(s)) for p, s in payload["bids"])
+            asks = tuple(PriceLevel(price=Decimal(p), size=Decimal(s)) for p, s in payload["asks"])
+            seq = int(payload.get("socket_sequence", payload.get("lastUpdateId", 0)))
+            self._initialized.add(pair)
+            self._pair_seq[pair] = seq
+            self._last_sequence_by_pair[pair] = seq
+            return [MarketEvent(
+                exchange=self.name, pair=pair, kind=EventKind.SNAPSHOT,
+                sequence=seq, timestamp_ns=time.time_ns(), bids=bids, asks=asks,
+            )]
 
-        # v1-style delta (events array with side/price/remaining)
+        # v1-style delta (events array with side/price/remaining) — kept for test fixtures.
         if "events" in payload and "symbol" in payload:
             pair = normalize_gemini_symbol(payload["symbol"])
             bids = tuple(PriceLevel(price=Decimal(e["price"]), size=Decimal(e["remaining"])) for e in payload["events"] if e["side"] == "bid")
             asks = tuple(PriceLevel(price=Decimal(e["price"]), size=Decimal(e["remaining"])) for e in payload["events"] if e["side"] == "ask")
-            return await self.finalize_events([MarketEvent(
-                exchange=self.name,
-                pair=pair,
-                kind=EventKind.DELTA,
-                sequence=int(payload.get("socket_sequence", 0)),
-                timestamp_ns=time.time_ns(),
-                bids=bids,
-                asks=asks,
-            )])
+            return await self._emit(pair, bids, asks)
 
         return []
+
+    async def _emit(self, pair: str, bids: tuple[PriceLevel, ...], asks: tuple[PriceLevel, ...]) -> list[MarketEvent]:
+        """Emit a snapshot on first message for a pair, then sequential deltas."""
+        if pair not in self._initialized:
+            self._initialized.add(pair)
+            snapshot = await self.fetch_snapshot(pair, trigger_sequence=0)
+            self._pair_seq[pair] = snapshot.sequence
+            self._last_sequence_by_pair[pair] = snapshot.sequence
+            return [snapshot]
+        seq = self._pair_seq[pair] + 1
+        self._pair_seq[pair] = seq
+        self._last_sequence_by_pair[pair] = seq
+        return [MarketEvent(
+            exchange=self.name, pair=pair, kind=EventKind.DELTA,
+            sequence=seq, timestamp_ns=time.time_ns(), bids=bids, asks=asks,
+        )]
 
     async def fetch_snapshot(self, pair: str, trigger_sequence: int) -> MarketEvent:
         symbol = pair.replace("-", "").lower()
