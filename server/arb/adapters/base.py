@@ -80,7 +80,7 @@ class ExchangeAdapter(abc.ABC):
         backoff = 1.0
         while True:
             try:
-                async with websockets.connect(self.ws_url) as websocket:
+                async with websockets.connect(self.ws_url, max_size=10_000_000) as websocket:
                     self.connected = True
                     self.last_error = None
                     await self.subscribe(websocket)
