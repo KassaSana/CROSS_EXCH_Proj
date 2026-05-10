@@ -32,6 +32,11 @@ class GeminiAdapter(ExchangeAdapter):
         self._initialized: set[str] = set()
         self._pair_seq: dict[str, int] = {}
 
+    async def reset_state(self) -> None:
+        await super().reset_state()
+        self._initialized.clear()
+        self._pair_seq.clear()
+
     async def subscribe(self, websocket: Any) -> None:
         symbols = [pair.upper().replace("-", "") for pair in self.pairs]
         await websocket.send(self.encode({

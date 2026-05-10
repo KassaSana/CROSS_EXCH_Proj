@@ -74,6 +74,12 @@ class ExchangeAdapter(abc.ABC):
     async def fetch_snapshot(self, pair: str, trigger_sequence: int) -> MarketEvent:
         raise NotImplementedError
 
+    async def reset_state(self) -> None:
+        """Clear per-connection state. Called before each (re)subscribe so
+        the next message after a reconnect re-fetches a fresh snapshot
+        instead of applying deltas onto a stale book."""
+        self._last_sequence_by_pair.clear()
+
     async def connect(self) -> AsyncIterator[MarketEvent]:
         import websockets
 
@@ -83,6 +89,7 @@ class ExchangeAdapter(abc.ABC):
                 async with websockets.connect(self.ws_url, max_size=10_000_000) as websocket:
                     self.connected = True
                     self.last_error = None
+                    await self.reset_state()
                     await self.subscribe(websocket)
                     backoff = 1.0
                     async for message in websocket:

@@ -198,6 +198,33 @@ def test_unrecognized_message_returns_no_events() -> None:
     assert asyncio.run(binance.parse_message('{"result":null,"id":1}')) == []
 
 
+def test_binance_reset_state_forces_resnapshot_after_reconnect() -> None:
+    # Regression: previously _initialized persisted across reconnects, so the
+    # first message after a reconnect skipped the REST snapshot and emitted a
+    # delta on top of a stale book. reset_state() must clear that state.
+    adapter = BinanceAdapter(["BTCUSDT"])
+    _stub_snapshot(adapter)
+    asyncio.run(adapter.parse_message('{"symbol":"BTCUSDT","lastUpdateId":1,"bids":[["100","1"]],"asks":[["101","2"]]}'))
+    asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":2,"U":2,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
+
+    asyncio.run(adapter.reset_state())
+
+    events = asyncio.run(adapter.parse_message('{"s":"BTCUSDT","u":3,"U":3,"E":1,"b":[["100","1"]],"a":[["101","1"]]}'))
+    assert events[0].kind is EventKind.SNAPSHOT
+
+
+def test_gemini_reset_state_forces_resnapshot_after_reconnect() -> None:
+    adapter = GeminiAdapter(["btcusd"])
+    _stub_snapshot(adapter)
+    asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["buy","100","1"]]}'))
+    asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["sell","101","1"]]}'))
+
+    asyncio.run(adapter.reset_state())
+
+    events = asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["buy","100","1"]]}'))
+    assert events[0].kind is EventKind.SNAPSHOT
+
+
 def test_binance_symbol_normalization_handles_non_usdt() -> None:
     assert normalize_binance_symbol("ethusdt") == "ETH-USD"
     assert normalize_binance_symbol("BTCUSDT") == "BTC-USD"
