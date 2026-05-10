@@ -41,6 +41,43 @@ export type TopOfBook = {
   timestamp_ns: number;
 };
 
+export type WindowKey = "1h" | "4h" | "1d" | "1w";
+
+export type PeakMinute = {
+  minute_start_ns: number;
+  count: number;
+};
+
+export type SystemOverview = {
+  started_at_ns: number;
+  uptime_seconds: number;
+  all_time_count: number;
+  all_time_max_spread_pct: string;
+  all_time_peak_minute: PeakMinute | null;
+};
+
+export type WindowStats = {
+  window: string;
+  count: number;
+  max_spread_pct: string;
+  mean_spread_pct: string;
+  total_theoretical_profit_usd: string;
+  top_pair: string | null;
+  peak_minute: PeakMinute | null;
+};
+
+export type TimeseriesPoint = {
+  bucket_start_ns: number;
+  count: number;
+  max_spread_pct: string;
+};
+
+export type Timeseries = {
+  window: string;
+  bucket_seconds: number;
+  points: TimeseriesPoint[];
+};
+
 const API_BASE = import.meta.env.VITE_API_URL ?? "https://arb-detector-api.onrender.com";
 const WS_BASE = API_BASE.replace(/^http/, "ws");
 
@@ -63,5 +100,30 @@ export async function fetchPairs(): Promise<PairRecord[]> {
 
 export async function fetchAdapterStatus(): Promise<AdapterStatus[]> {
   const response = await fetch(`${API_BASE}/api/adapters`);
+  return response.json();
+}
+
+export async function fetchSystemOverview(): Promise<SystemOverview> {
+  const response = await fetch(`${API_BASE}/api/system/overview`);
+  return response.json();
+}
+
+export async function fetchSystemStats(window: WindowKey): Promise<WindowStats> {
+  const response = await fetch(`${API_BASE}/api/system/stats?window=${window}`);
+  return response.json();
+}
+
+export async function fetchSystemTimeseries(
+  window: WindowKey,
+  bucketSeconds = 60,
+): Promise<Timeseries> {
+  const response = await fetch(
+    `${API_BASE}/api/system/timeseries?window=${window}&bucket_seconds=${bucketSeconds}`,
+  );
+  return response.json();
+}
+
+export async function resetSystemTimer(): Promise<{ started_at_ns: number; uptime_seconds: number }> {
+  const response = await fetch(`${API_BASE}/api/system/reset`, { method: "POST" });
   return response.json();
 }

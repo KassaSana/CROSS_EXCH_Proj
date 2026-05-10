@@ -10,10 +10,12 @@ from arb.persistence import OpportunityStore
 from arb.types import ArbitrageOpportunity
 
 
-def make_opp(timestamp_ns: int, spread: str = "1", profit: str = "0.5") -> ArbitrageOpportunity:
+def make_opp(
+    timestamp_ns: int, spread: str = "1", profit: str = "0.5", pair: str = "BTC-USD"
+) -> ArbitrageOpportunity:
     return ArbitrageOpportunity(
         timestamp_ns=timestamp_ns,
-        pair="BTC-USD",
+        pair=pair,
         buy_exchange="gemini",
         sell_exchange="coinbase",
         buy_price=Decimal("100.123456789"),
@@ -137,3 +139,118 @@ async def test_recent_on_empty_store_returns_empty_list(tmp_path: Path) -> None:
     store = OpportunityStore(str(tmp_path / "db.sqlite3"))
     await store.initialize()
     assert await store.recent(limit=5) == []
+
+
+@pytest.mark.asyncio
+async def test_extended_stats_aggregates_within_window(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05)
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+    now_ns = time.time_ns()
+    # 3 BTC opps, 1 ETH opp inside window; one stale ETH outside.
+    await store.enqueue(make_opp(now_ns, spread="2", profit="1", pair="BTC-USD"))
+    await store.enqueue(make_opp(now_ns - 1, spread="3", profit="2", pair="BTC-USD"))
+    await store.enqueue(make_opp(now_ns - 2, spread="1", profit="0.5", pair="BTC-USD"))
+    await store.enqueue(make_opp(now_ns - 3, spread="5", profit="10", pair="ETH-USD"))
+    await store.enqueue(make_opp(now_ns - 10_000_000_000_000, spread="99", profit="999", pair="ETH-USD"))
+    await asyncio.sleep(0.2)
+
+    stats = await store.extended_stats(window_ns=3_600_000_000_000)
+    assert stats["count"] == 4
+    assert Decimal(str(stats["max_spread_pct"])) == Decimal("5")
+    assert Decimal(str(stats["mean_spread_pct"])) == Decimal("2.75")
+    assert Decimal(str(stats["total_theoretical_profit_usd"])) == Decimal("13.5")
+    assert stats["top_pair"] == "BTC-USD"
+    await store.close()
+    runner.cancel()
+
+
+@pytest.mark.asyncio
+async def test_extended_stats_all_time_with_window_none(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05)
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+    await store.enqueue(make_opp(timestamp_ns=1, spread="2", pair="BTC-USD"))
+    await store.enqueue(make_opp(timestamp_ns=2, spread="4", pair="BTC-USD"))
+    await asyncio.sleep(0.2)
+
+    stats = await store.extended_stats(window_ns=None)
+    assert stats["count"] == 2
+    assert Decimal(str(stats["max_spread_pct"])) == Decimal("4")
+    assert stats["top_pair"] == "BTC-USD"
+    await store.close()
+    runner.cancel()
+
+
+@pytest.mark.asyncio
+async def test_extended_stats_empty_returns_safe_defaults(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "db.sqlite3"))
+    await store.initialize()
+    stats = await store.extended_stats(window_ns=3_600_000_000_000)
+    assert stats["count"] == 0
+    assert Decimal(str(stats["max_spread_pct"])) == Decimal("0")
+    assert Decimal(str(stats["mean_spread_pct"])) == Decimal("0")
+    assert Decimal(str(stats["total_theoretical_profit_usd"])) == Decimal("0")
+    assert stats["top_pair"] is None
+
+
+@pytest.mark.asyncio
+async def test_peak_minute_returns_busiest_bucket(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=20, flush_interval_seconds=0.05)
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+    minute_ns = 60_000_000_000
+    base = (time.time_ns() // minute_ns) * minute_ns
+    # Minute A: 2 opps. Minute B: 5 opps (the peak).
+    for offset in range(2):
+        await store.enqueue(make_opp(timestamp_ns=base + offset))
+    for offset in range(5):
+        await store.enqueue(make_opp(timestamp_ns=base + minute_ns + offset))
+    await asyncio.sleep(0.2)
+
+    peak = await store.peak_minute(window_ns=3_600_000_000_000)
+    assert peak is not None
+    assert peak["count"] == 5
+    assert peak["minute_start_ns"] == base + minute_ns
+    await store.close()
+    runner.cancel()
+
+
+@pytest.mark.asyncio
+async def test_peak_minute_returns_none_when_empty(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "db.sqlite3"))
+    await store.initialize()
+    assert await store.peak_minute(window_ns=3_600_000_000_000) is None
+    assert await store.peak_minute(window_ns=None) is None
+
+
+@pytest.mark.asyncio
+async def test_timeseries_buckets_and_orders_ascending(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=20, flush_interval_seconds=0.05)
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+    bucket_seconds = 60
+    bucket_ns = bucket_seconds * 1_000_000_000
+    base = (time.time_ns() // bucket_ns) * bucket_ns
+    await store.enqueue(make_opp(timestamp_ns=base, spread="1"))
+    await store.enqueue(make_opp(timestamp_ns=base + 1, spread="3"))
+    await store.enqueue(make_opp(timestamp_ns=base + bucket_ns, spread="2"))
+    await asyncio.sleep(0.2)
+
+    points = await store.timeseries(window_ns=3_600_000_000_000, bucket_seconds=bucket_seconds)
+    assert len(points) == 2
+    assert points[0]["bucket_start_ns"] == base
+    assert points[0]["count"] == 2
+    assert Decimal(str(points[0]["max_spread_pct"])) == Decimal("3")
+    assert points[1]["bucket_start_ns"] == base + bucket_ns
+    assert points[1]["count"] == 1
+    await store.close()
+    runner.cancel()
+
+
+@pytest.mark.asyncio
+async def test_timeseries_rejects_non_positive_bucket(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "db.sqlite3"))
+    await store.initialize()
+    with pytest.raises(ValueError):
+        await store.timeseries(window_ns=3_600_000_000_000, bucket_seconds=0)

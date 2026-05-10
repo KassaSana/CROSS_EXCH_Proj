@@ -18,8 +18,11 @@ from arb.types import LiveMessage
 def window_to_ns(window: str) -> int:
     values = {
         "1h": 3_600_000_000_000,
+        "4h": 14_400_000_000_000,
         "24h": 86_400_000_000_000,
+        "1d": 86_400_000_000_000,
         "72h": 259_200_000_000_000,
+        "1w": 604_800_000_000_000,
     }
     return values.get(window, values["1h"])
 
@@ -61,6 +64,7 @@ def create_app(
     broadcaster: LiveBroadcaster,
     adapters: Iterable[ExchangeAdapter] = (),
     expected_pairs: Iterable[tuple[str, str]] = (),
+    started_at_holder: list[int] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Cross-Exchange Arbitrage Detector")
     app.add_middleware(
@@ -71,6 +75,7 @@ def create_app(
     )
     adapter_list = list(adapters)
     tracked_pairs = list(expected_pairs)
+    started_at: list[int] = started_at_holder if started_at_holder is not None else [time.time_ns()]
 
     @app.get("/api/opportunities/recent")
     async def recent_opportunities(limit: int = 100) -> list[dict[str, str | int]]:
@@ -79,6 +84,37 @@ def create_app(
     @app.get("/api/stats")
     async def stats(window: str = "1h") -> dict[str, str | int]:
         return await store.stats(window_to_ns(window))
+
+    @app.get("/api/system/overview")
+    async def system_overview() -> dict[str, object]:
+        all_time = await store.extended_stats(window_ns=None)
+        return {
+            "started_at_ns": started_at[0],
+            "uptime_seconds": max(0, (time.time_ns() - started_at[0]) // 1_000_000_000),
+            "all_time_count": all_time["count"],
+            "all_time_max_spread_pct": all_time["max_spread_pct"],
+            "all_time_peak_minute": await store.peak_minute(window_ns=None),
+        }
+
+    @app.get("/api/system/stats")
+    async def system_stats(window: str = "1h") -> dict[str, object]:
+        window_ns = window_to_ns(window)
+        extended = await store.extended_stats(window_ns=window_ns)
+        peak = await store.peak_minute(window_ns=window_ns)
+        return {"window": window, **extended, "peak_minute": peak}
+
+    @app.get("/api/system/timeseries")
+    async def system_timeseries(window: str = "1h", bucket_seconds: int = 60) -> dict[str, object]:
+        window_ns = window_to_ns(window)
+        if bucket_seconds <= 0:
+            bucket_seconds = 60
+        points = await store.timeseries(window_ns=window_ns, bucket_seconds=bucket_seconds)
+        return {"window": window, "bucket_seconds": bucket_seconds, "points": points}
+
+    @app.post("/api/system/reset")
+    async def system_reset() -> dict[str, int]:
+        started_at[0] = time.time_ns()
+        return {"started_at_ns": started_at[0], "uptime_seconds": 0}
 
     @app.get("/api/pairs")
     async def pairs() -> list[dict[str, str]]:

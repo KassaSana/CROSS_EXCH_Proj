@@ -128,6 +128,83 @@ class OpportunityStore:
             "total_theoretical_profit_usd": str(Decimal(str(row[2]))),
         }
 
+    async def extended_stats(self, window_ns: int | None) -> dict[str, str | int | None]:
+        cutoff_ns = 0 if window_ns is None else time.time_ns() - window_ns
+        agg_query = """
+        SELECT COUNT(*),
+               COALESCE(MAX(CAST(spread_pct AS REAL)), 0),
+               COALESCE(AVG(CAST(spread_pct AS REAL)), 0),
+               COALESCE(SUM(CAST(theoretical_profit_usd AS REAL)), 0)
+        FROM opportunities
+        WHERE timestamp_ns >= ?
+        """
+        top_pair_query = """
+        SELECT pair, COUNT(*) AS c
+        FROM opportunities
+        WHERE timestamp_ns >= ?
+        GROUP BY pair
+        ORDER BY c DESC
+        LIMIT 1
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            agg_cursor = await db.execute(agg_query, (cutoff_ns,))
+            agg_row = await agg_cursor.fetchone()
+            top_cursor = await db.execute(top_pair_query, (cutoff_ns,))
+            top_row = await top_cursor.fetchone()
+        count = int(agg_row[0]) if agg_row else 0
+        return {
+            "count": count,
+            "max_spread_pct": str(Decimal(str(agg_row[1]))) if agg_row else "0",
+            "mean_spread_pct": str(Decimal(str(agg_row[2]))) if agg_row else "0",
+            "total_theoretical_profit_usd": str(Decimal(str(agg_row[3]))) if agg_row else "0",
+            "top_pair": top_row[0] if top_row else None,
+        }
+
+    async def peak_minute(self, window_ns: int | None) -> dict[str, int] | None:
+        cutoff_ns = 0 if window_ns is None else time.time_ns() - window_ns
+        query = """
+        SELECT (timestamp_ns / 60000000000) AS bucket, COUNT(*) AS c
+        FROM opportunities
+        WHERE timestamp_ns >= ?
+        GROUP BY bucket
+        ORDER BY c DESC, bucket DESC
+        LIMIT 1
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(query, (cutoff_ns,))
+            row = await cursor.fetchone()
+        if row is None or row[1] == 0:
+            return None
+        return {"minute_start_ns": int(row[0]) * 60_000_000_000, "count": int(row[1])}
+
+    async def timeseries(
+        self, window_ns: int, bucket_seconds: int
+    ) -> list[dict[str, int | str]]:
+        if bucket_seconds <= 0:
+            raise ValueError("bucket_seconds must be positive")
+        bucket_ns = bucket_seconds * 1_000_000_000
+        cutoff_ns = time.time_ns() - window_ns
+        query = """
+        SELECT (timestamp_ns / ?) AS bucket,
+               COUNT(*) AS c,
+               COALESCE(MAX(CAST(spread_pct AS REAL)), 0) AS max_spread
+        FROM opportunities
+        WHERE timestamp_ns >= ?
+        GROUP BY bucket
+        ORDER BY bucket ASC
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(query, (bucket_ns, cutoff_ns))
+            rows = await cursor.fetchall()
+        return [
+            {
+                "bucket_start_ns": int(row[0]) * bucket_ns,
+                "count": int(row[1]),
+                "max_spread_pct": str(Decimal(str(row[2]))),
+            }
+            for row in rows
+        ]
+
     async def _flush(self, batch: Iterable[ArbitrageOpportunity]) -> None:
         rows = [
             (
