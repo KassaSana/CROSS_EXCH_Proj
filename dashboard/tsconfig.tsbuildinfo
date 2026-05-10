@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/api/client.ts","./src/components/adapterstatus.tsx","./src/components/livespreads.tsx","./src/components/opportunityfeed.tsx","./src/components/statscards.tsx","./src/hooks/usewebsocket.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/api/client.ts","./src/components/adapterstatus.tsx","./src/components/livespreads.tsx","./src/components/opportunityfeed.tsx","./src/components/statscards.tsx","./src/hooks/usewebsocket.ts"],"version":"5.9.3"}
