@@ -163,8 +163,11 @@ def test_window_to_ns_known_and_unknown_values() -> None:
     from arb.api import window_to_ns
 
     assert window_to_ns("1h") == 3_600_000_000_000
+    assert window_to_ns("4h") == 14_400_000_000_000
     assert window_to_ns("24h") == 86_400_000_000_000
+    assert window_to_ns("1d") == 86_400_000_000_000
     assert window_to_ns("72h") == 259_200_000_000_000
+    assert window_to_ns("1w") == 604_800_000_000_000
     # Unknown windows must default to 1h, never raise.
     assert window_to_ns("nonsense") == 3_600_000_000_000
 
@@ -274,3 +277,123 @@ def test_websocket_route_accepts_connection() -> None:
     with client.websocket_connect("/ws/live") as ws:
         # Connection accepted; sending text is allowed by the keepalive loop.
         ws.send_text("ping")
+
+
+def _seed_opp(store: OpportunityStore, **kwargs: Any) -> ArbitrageOpportunity:
+    defaults: dict[str, Any] = dict(
+        timestamp_ns=time.time_ns(),
+        pair="BTC-USD",
+        buy_exchange="gemini",
+        sell_exchange="coinbase",
+        buy_price=Decimal("100"),
+        sell_price=Decimal("103"),
+        spread_pct=Decimal("3"),
+        max_size=Decimal("1"),
+        theoretical_profit_usd=Decimal("3"),
+    )
+    defaults.update(kwargs)
+    return ArbitrageOpportunity(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_system_overview_reports_uptime_and_started_at(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "ov.sqlite3"))
+    await store.initialize()
+    started_at_holder = [time.time_ns() - 5_000_000_000]  # started 5s ago
+    client = TestClient(
+        create_app(store, OrderBookManager(), LiveBroadcaster(), started_at_holder=started_at_holder)
+    )
+    response = client.get("/api/system/overview")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["started_at_ns"] == started_at_holder[0]
+    assert body["uptime_seconds"] >= 5
+    assert body["all_time_count"] == 0
+    assert body["all_time_peak_minute"] is None
+
+
+@pytest.mark.asyncio
+async def test_system_stats_endpoint_returns_extended_aggregates(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "sys.sqlite3"), batch_size=10, flush_interval_seconds=0.05)
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+    now = time.time_ns()
+    await store.enqueue(_seed_opp(store, timestamp_ns=now, spread_pct=Decimal("2"), pair="BTC-USD"))
+    await store.enqueue(_seed_opp(store, timestamp_ns=now - 1, spread_pct=Decimal("4"), pair="BTC-USD"))
+    await store.enqueue(_seed_opp(store, timestamp_ns=now - 2, spread_pct=Decimal("1"), pair="ETH-USD"))
+    await asyncio.sleep(0.2)
+    await store.close()
+    runner.cancel()
+
+    client = TestClient(create_app(store, OrderBookManager(), LiveBroadcaster()))
+    response = client.get("/api/system/stats?window=1h")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["window"] == "1h"
+    assert body["count"] == 3
+    assert Decimal(body["max_spread_pct"]) == Decimal("4")
+    assert body["top_pair"] == "BTC-USD"
+    assert body["peak_minute"] is not None
+
+
+@pytest.mark.asyncio
+async def test_system_timeseries_endpoint_returns_buckets(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "ts.sqlite3"), batch_size=10, flush_interval_seconds=0.05)
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+    bucket_ns = 60 * 1_000_000_000
+    base = (time.time_ns() // bucket_ns) * bucket_ns
+    await store.enqueue(_seed_opp(store, timestamp_ns=base))
+    await store.enqueue(_seed_opp(store, timestamp_ns=base + bucket_ns))
+    await asyncio.sleep(0.2)
+    await store.close()
+    runner.cancel()
+
+    client = TestClient(create_app(store, OrderBookManager(), LiveBroadcaster()))
+    response = client.get("/api/system/timeseries?window=1h&bucket_seconds=60")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["window"] == "1h"
+    assert body["bucket_seconds"] == 60
+    assert len(body["points"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_system_reset_zeros_uptime_without_clearing_history(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "reset.sqlite3"))
+    await store.initialize()
+    started_at_holder = [time.time_ns() - 60_000_000_000]  # started 60s ago
+    client = TestClient(
+        create_app(store, OrderBookManager(), LiveBroadcaster(), started_at_holder=started_at_holder)
+    )
+    before = client.get("/api/system/overview").json()
+    assert before["uptime_seconds"] >= 60
+
+    reset = client.post("/api/system/reset")
+    assert reset.status_code == 200
+    assert reset.json()["uptime_seconds"] == 0
+
+    after = client.get("/api/system/overview").json()
+    assert after["uptime_seconds"] < 5
+    assert after["started_at_ns"] > before["started_at_ns"]
+    # Holder is mutated so subsequent endpoints see the new start.
+    assert started_at_holder[0] == after["started_at_ns"]
+
+
+@pytest.mark.asyncio
+async def test_system_endpoints_handle_empty_store(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "empty.sqlite3"))
+    await store.initialize()
+    client = TestClient(create_app(store, OrderBookManager(), LiveBroadcaster()))
+
+    overview = client.get("/api/system/overview").json()
+    assert overview["all_time_count"] == 0
+    assert overview["all_time_peak_minute"] is None
+
+    stats = client.get("/api/system/stats?window=1w").json()
+    assert stats["count"] == 0
+    assert stats["top_pair"] is None
+    assert stats["peak_minute"] is None
+
+    ts = client.get("/api/system/timeseries?window=1h&bucket_seconds=60").json()
+    assert ts["points"] == []

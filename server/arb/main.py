@@ -51,6 +51,7 @@ def configure_logging() -> None:
 async def run_pipeline() -> None:
     configure_logging()
     config = load_config()
+    started_at_holder: list[int] = [time.time_ns()]
     book_manager = OrderBookManager()
     detector = ArbitrageDetector(threshold_pct=Decimal(str(config.detector.threshold_pct)))
     store = OpportunityStore(
@@ -70,7 +71,14 @@ async def run_pipeline() -> None:
         *(("coinbase", normalize_coinbase_symbol(symbol)) for symbol in config.exchanges.get("coinbase", [])),
         *(("binance", normalize_binance_symbol(symbol)) for symbol in config.exchanges.get("binance", [])),
     ]
-    app = create_app(store, book_manager, broadcaster, adapters=adapters, expected_pairs=expected_pairs)
+    app = create_app(
+        store,
+        book_manager,
+        broadcaster,
+        adapters=adapters,
+        expected_pairs=expected_pairs,
+        started_at_holder=started_at_holder,
+    )
 
     await store.initialize()
     persistence_task = asyncio.create_task(store.run())
