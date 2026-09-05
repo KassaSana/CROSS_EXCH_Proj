@@ -69,7 +69,7 @@ python3 server/scripts/replay.py server/tests/fixtures/recorded
 - SQLite over Postgres: zero-ops persistence was the right choice for a single-process portfolio system with batched writes.
 - One process over distributed services: the project goal is correctness, observability, and measurable performance, not deployment complexity.
 - asyncio over threads: exchange feeds, persistence flushing, broadcasting, and reconciliation are naturally event-driven.
-- Adapter-driven resync over delta buffering: on sequence gaps, each adapter fetches a fresh REST snapshot and emits a synthetic snapshot event. That is simpler and safer for this scope than replay buffering.
+- Exchange-specific recovery: Binance aligns buffered deltas with a REST snapshot, Coinbase waits for a new Level 2 stream snapshot, and Gemini reconnects for a new `snapshot=-1` depth frame. Protocol rules stay in each adapter while consumers share one eligibility rule.
 
 ## Validation Status
 
@@ -77,7 +77,7 @@ Implemented and verified:
 - end-to-end synthetic benchmark harness writing to `benchmarks/results.json`
 - property-based order book tests
 - replay regression tests using recorded fixtures
-- adapter-driven gap resync with REST snapshot recovery
+- exchange-specific gap detection and trusted snapshot recovery
 - snapshot reconciliation job
 - Prometheus metrics plus `/healthz`, `/readyz`, `/metrics`, and `/api/adapters`
 - CI workflow, mypy strict, ruff, frontend lint/typecheck, and pre-commit config
