@@ -66,7 +66,7 @@ python3 server/scripts/soak.py \
   --output benchmarks/soak_YYYY-MM-DD.md
 ```
 
-The observer samples adapter reconnects and gaps, canonical book eligibility and
-age, readiness, opportunities, background-task failures, HTTP failures, recovery
-durations, and backend RSS. Shorter durations are useful as smoke tests but must
-not be described as the required 24-hour soak.
+The observer samples per-exchange ingest volume, adapter reconnects and gaps,
+canonical book eligibility and age, readiness, opportunities, background-task
+failures, HTTP failures, recovery durations, and backend RSS. Shorter durations
+are useful as smoke tests but must not be described as the required 24-hour soak.

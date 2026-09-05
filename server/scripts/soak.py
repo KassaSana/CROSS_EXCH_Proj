@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import ctypes
 import json
+import re
 import statistics
 import sys
 from collections import Counter
@@ -73,8 +74,10 @@ class AdapterObservation:
     last_gaps: int = 0
     max_message_age_ms: int | None = None
     last_error: str | None = None
+    first_events: int | None = None
+    last_events: int = 0
 
-    def observe(self, payload: dict[str, Any]) -> None:
+    def observe(self, payload: dict[str, Any], event_count: int | None) -> None:
         reconnects = int(payload["reconnect_count"])
         gaps = int(payload["gap_count"])
         if self.first_reconnects is None:
@@ -87,6 +90,10 @@ class AdapterObservation:
         if age is not None:
             self.max_message_age_ms = max(self.max_message_age_ms or 0, int(age))
         self.last_error = payload.get("last_error")
+        if event_count is not None:
+            if self.first_events is None:
+                self.first_events = event_count
+            self.last_events = event_count
 
 
 @dataclass
@@ -140,6 +147,7 @@ class SoakReport:
         books: list[dict[str, Any]],
         readiness: dict[str, Any],
         overview: dict[str, Any],
+        event_counts: dict[str, int],
         elapsed_seconds: float,
         rss: int | None,
     ) -> None:
@@ -157,7 +165,9 @@ class SoakReport:
 
         for payload in adapters:
             exchange = str(payload["exchange"])
-            self.adapters.setdefault(exchange, AdapterObservation()).observe(payload)
+            self.adapters.setdefault(exchange, AdapterObservation()).observe(
+                payload, event_counts.get(exchange)
+            )
         for payload in books:
             key = f"{payload['exchange']}:{payload['pair']}"
             self.books.setdefault(key, BookObservation()).observe(payload, elapsed_seconds)
@@ -181,15 +191,16 @@ class SoakReport:
             "",
             "## Adapters",
             "",
-            "| Exchange | Reconnects during run | Gaps during run | Max message age | Last error |",
-            "| --- | ---: | ---: | ---: | --- |",
+            "| Exchange | Events during run | Reconnects | Gaps | Max message age | Last error |",
+            "| --- | ---: | ---: | ---: | ---: | --- |",
         ]
         for exchange, observation in sorted(self.adapters.items()):
             reconnect_delta = observation.last_reconnects - (observation.first_reconnects or 0)
             gap_delta = observation.last_gaps - (observation.first_gaps or 0)
+            event_delta = observation.last_events - (observation.first_events or 0)
             age = "-" if observation.max_message_age_ms is None else f"{observation.max_message_age_ms} ms"
             lines.append(
-                f"| {exchange} | {reconnect_delta} | {gap_delta} | {age} | "
+                f"| {exchange} | {event_delta} | {reconnect_delta} | {gap_delta} | {age} | "
                 f"{observation.last_error or '-'} |"
             )
 
@@ -250,6 +261,23 @@ async def fetch_json(client: httpx.AsyncClient, path: str) -> dict[str, Any] | l
     return response.json()  # type: ignore[no-any-return]
 
 
+def parse_event_counts(metrics: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    pattern = re.compile(
+        r'^arb_events_ingested_total\{[^}]*exchange="([^"]+)"[^}]*\}\s+([0-9.eE+-]+)$'
+    )
+    for line in metrics.splitlines():
+        if match := pattern.match(line):
+            counts[match.group(1)] = int(float(match.group(2)))
+    return counts
+
+
+async def fetch_event_counts(client: httpx.AsyncClient) -> dict[str, int]:
+    response = await client.get("/metrics")
+    response.raise_for_status()
+    return parse_event_counts(response.text)
+
+
 async def run_soak(
     base_url: str,
     duration_seconds: float,
@@ -263,21 +291,24 @@ async def run_soak(
         while True:
             elapsed = loop.time() - started
             try:
-                adapters, books, readiness, overview = await asyncio.gather(
+                adapters, books, readiness, overview, event_counts = await asyncio.gather(
                     fetch_json(client, "/api/adapters"),
                     fetch_json(client, "/api/book-status"),
                     fetch_json(client, "/readyz"),
                     fetch_json(client, "/api/system/overview"),
+                    fetch_event_counts(client),
                 )
                 assert isinstance(adapters, list)
                 assert isinstance(books, list)
                 assert isinstance(readiness, dict)
                 assert isinstance(overview, dict)
+                assert isinstance(event_counts, dict)
                 report.observe(
                     adapters=adapters,
                     books=books,
                     readiness=readiness,
                     overview=overview,
+                    event_counts=event_counts,
                     elapsed_seconds=elapsed,
                     rss=None if pid is None else process_rss_bytes(pid),
                 )
