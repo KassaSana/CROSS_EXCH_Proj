@@ -114,7 +114,7 @@ class BookEligibility:
 
 @dataclass(frozen=True)
 class LiveMessage:
-    type: Literal["top_of_book", "opportunity", "book_status"]
+    type: Literal["top_of_book", "opportunity", "book_status", "state_snapshot"]
     payload: dict[str, object]
 
 

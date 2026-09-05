@@ -296,7 +296,11 @@ async def test_broadcaster_sends_to_all_clients() -> None:
     await broadcaster.connect(a)  # type: ignore[arg-type]
     await broadcaster.connect(b)  # type: ignore[arg-type]
     await broadcaster.broadcast(LiveMessage(type="opportunity", payload={"pair": "BTC-USD"}))
-    assert a.sent == [{"type": "opportunity", "payload": {"pair": "BTC-USD"}}]
+    assert a.sent == [{
+        "type": "opportunity",
+        "payload": {"pair": "BTC-USD"},
+        "stream_sequence": 1,
+    }]
     assert b.sent == a.sent
 
 
@@ -325,8 +329,68 @@ async def test_broadcaster_with_no_clients_is_noop() -> None:
 def test_websocket_route_accepts_connection() -> None:
     client = TestClient(create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster()))
     with client.websocket_connect("/ws/live") as ws:
-        # Connection accepted; sending text is allowed by the keepalive loop.
+        snapshot = ws.receive_json()
+        assert snapshot["type"] == "state_snapshot"
+        assert snapshot["payload"] == {"books": [], "statuses": []}
+        assert snapshot["stream_sequence"] == 1
         ws.send_text("ping")
+
+
+def test_websocket_connection_restores_only_current_eligible_books() -> None:
+    manager = OrderBookManager(clock=lambda: 1_000)
+    manager.apply(
+        MarketEvent(
+            exchange="stub",
+            pair="BTC-USD",
+            kind=EventKind.SNAPSHOT,
+            sequence=4,
+            timestamp_ns=99,
+            bids=(PriceLevel(price=Decimal("100"), size=Decimal("1")),),
+            asks=(PriceLevel(price=Decimal("101"), size=Decimal("2")),),
+        ),
+        received_monotonic_ns=1_000,
+    )
+    app = create_app(
+        OpportunityStore(":memory:"),
+        manager,
+        LiveBroadcaster(),
+        expected_pairs=[("stub", "BTC-USD"), ("stub", "ETH-USD")],
+    )
+
+    with TestClient(app).websocket_connect("/ws/live") as ws:
+        snapshot = ws.receive_json()
+
+    assert snapshot["type"] == "state_snapshot"
+    assert snapshot["payload"]["books"] == [
+        {
+            "exchange": "stub",
+            "pair": "BTC-USD",
+            "best_bid_price": "100",
+            "best_bid_size": "1",
+            "best_ask_price": "101",
+            "best_ask_size": "2",
+            "sequence": 4,
+            "timestamp_ns": 99,
+        }
+    ]
+    assert [status["eligible"] for status in snapshot["payload"]["statuses"]] == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_initial_state_is_ordered_before_live_updates() -> None:
+    broadcaster = LiveBroadcaster()
+    websocket = FakeWebSocket()
+    await broadcaster.connect(
+        websocket,  # type: ignore[arg-type]
+        lambda: LiveMessage(type="state_snapshot", payload={"books": []}),
+    )
+    await broadcaster.broadcast(LiveMessage(type="top_of_book", payload={"sequence": 2}))
+
+    assert [message["type"] for message in websocket.sent] == [
+        "state_snapshot",
+        "top_of_book",
+    ]
+    assert [message["stream_sequence"] for message in websocket.sent] == [1, 2]
 
 
 def _seed_opp(store: OpportunityStore, **kwargs: Any) -> ArbitrageOpportunity:
