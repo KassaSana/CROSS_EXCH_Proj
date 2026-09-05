@@ -111,7 +111,7 @@ Render's free tier sleeps after 15 min of inactivity — when sleeping, the back
 
 ## Known quirks
 
-- **Coinbase adapter receives very few events** in production compared to Gemini/Binance (~500 vs ~20M). Suspected broken — needs investigation.
+- **The old Coinbase low-volume concern is retired.** A 2026-09-05 live smoke observed 29,001 Coinbase events in five minutes versus 2,042 Gemini and 1,760 Binance events, with zero gaps or reconnects. See `benchmarks/soak_smoke_5m_2026-09-05.md`.
 - **MATIC was removed** from `config.toml` because Polygon rebranded to POL in late 2024 and the major exchanges delisted MATIC. Adding any new pair requires checking listing status on all three venues.
 - **All detected opportunities are theoretical** — no fees, slippage, transfer time, or inventory constraints are accounted for. This is a detection/observability system, not an execution engine.
 
