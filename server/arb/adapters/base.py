@@ -62,6 +62,7 @@ class ExchangeAdapter(abc.ABC):
         self.last_error: str | None = None
         self._last_sequence_by_pair: dict[str, int] = {}
         self._connection_state_callback: Callable[[str, bool], None] | None = None
+        self._reconnect_requested = False
 
     def set_connection_state_callback(self, callback: Callable[[str, bool], None]) -> None:
         self._connection_state_callback = callback
@@ -87,6 +88,10 @@ class ExchangeAdapter(abc.ABC):
         the next message after a reconnect re-fetches a fresh snapshot
         instead of applying deltas onto a stale book."""
         self._last_sequence_by_pair.clear()
+        self._reconnect_requested = False
+
+    def request_reconnect(self) -> None:
+        self._reconnect_requested = True
 
     async def connect(self) -> AsyncIterator[MarketEvent]:
         import websockets
@@ -106,6 +111,8 @@ class ExchangeAdapter(abc.ABC):
                         text_message = message.decode() if isinstance(message, bytes) else message
                         for event in await self.parse_message(text_message):
                             yield event
+                        if self._reconnect_requested:
+                            raise RuntimeError("adapter requested reconnect")
             except Exception as exc:  # pragma: no cover - reconnect path
                 self.connected = False
                 self._report_connection_state(False)
