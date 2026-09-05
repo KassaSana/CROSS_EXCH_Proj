@@ -22,10 +22,12 @@ rule.
 | 3b. Backend state restore on connect | DONE | `server/arb/api.py` |
 | 4a. Bounded per-client queues | DONE | `server/arb/api.py` |
 | 4b. Background task visibility | DONE | `server/arb/main.py` |
+| Freshness threshold tuning | DONE | `config.toml`, `benchmarks/soak_smoke_5m_2026-09-05.md` |
 | Proof: fixture-driven failure cases | MOSTLY DONE | `server/tests/` |
+| Proof: live smoke | DONE | `benchmarks/soak_smoke_5m_2026-09-05.md` |
 | Proof: live soak | NOT STARTED | - |
 
-Baseline: 135 tests passing as of 2026-09-05.
+Baseline: 138 tests passing as of 2026-09-05.
 
 ## 1. Correct sequence handling inside each adapter
 
@@ -116,16 +118,20 @@ Responsibilities landed as designed:
 
 Freshness: `MarketEvent.received_monotonic_ns` is stamped in
 `ExchangeAdapter.stream_events()` before parsing; ages use `time.monotonic_ns`;
-`max_age_seconds` is configurable (`config.toml:20`, currently 30.0, matching the
-existing readiness threshold). `eligible_books()` requires at least two eligible
-exchange books before returning any.
+`max_age_seconds` is configurable (`config.toml:20`, currently 60.0).
+`eligible_books()` requires at least two eligible exchange books before returning
+any.
 
 The same decision is reused by detection, `/book-status`, `/readyz`, and the
 `book_eligible` / `book_staleness_seconds` metrics via `eligibility_for()`
 (`server/arb/api.py:125`).
 
-Still open as a tuning task: measure how often the age cutoff excludes a quiet
-but valid market, then tune it explicitly rather than by inheritance.
+The cutoff was tuned from 30 to 60 seconds after the five-minute live smoke
+observed Binance DOT remain continuous and connected but receive no pair update
+for 38.5 seconds. The old cutoff excluded it for two samples before it recovered
+without a reconnect or gap. The new value preserves a clear recency bound while
+avoiding the observed false exclusion; the 24-hour soak must validate it across
+longer quiet periods.
 
 ## 3. Reconnect the dashboard and restore its state
 
@@ -196,11 +202,13 @@ Not yet covered:
 
 ## Next up
 
-**Start here: live soak and threshold tuning.** All planned code paths are now
-implemented; the remaining proof requires observation against live traffic.
+**Start here: the 24-hour live soak.** All planned code paths and initial
+threshold tuning are complete; the remaining proof requires long observation.
 
-1. **Live soak run and threshold tuning** - includes re-measuring the Coinbase
-   event-volume quirk and the 30s age cutoff's exclusion rate.
+1. **24-hour live soak** - validate the 60-second age cutoff, memory stability,
+   reconnect recovery, and gap handling. The five-minute smoke already retired
+   the Coinbase event-volume concern: it observed 29,001 Coinbase events versus
+   2,042 Gemini and 1,760 Binance events, with zero adapter gaps or reconnects.
 
 ### Picking this up in a fresh session
 
