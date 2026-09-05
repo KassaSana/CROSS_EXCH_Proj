@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
 from arb.adapters.base import ExchangeAdapter
-from arb.metrics import book_staleness_seconds, render_metrics, ws_clients
+from arb.metrics import book_eligible, book_staleness_seconds, render_metrics, ws_clients
 from arb.orderbook import OrderBookManager
 from arb.persistence import OpportunityStore
 from arb.types import LiveMessage
@@ -120,6 +120,10 @@ def create_app(
     async def pairs() -> list[dict[str, str]]:
         return [{"exchange": exchange, "pair": pair} for exchange, pair in book_manager.known_pairs()]
 
+    @app.get("/api/book-status")
+    async def book_status() -> list[dict[str, object]]:
+        return [status.as_payload() for status in book_manager.eligibility_for(tracked_pairs)]
+
     @app.get("/api/adapters")
     async def adapter_status() -> list[dict[str, str | int | bool | None]]:
         now_ns = time.time_ns()
@@ -131,13 +135,11 @@ def create_app(
 
     @app.get("/readyz")
     async def readyz() -> JSONResponse:
-        now_ns = time.time_ns()
         disconnected = [adapter.name for adapter in adapter_list if not adapter.connected]
         stale_pairs: list[dict[str, object]] = []
-        for exchange, pair in tracked_pairs:
-            status = book_manager.eligibility(exchange, pair)
+        for status in book_manager.eligibility_for(tracked_pairs):
             if not status.eligible:
-                stale_pairs.append({"exchange": exchange, "pair": pair})
+                stale_pairs.append(status.as_payload())
 
         ready = not disconnected and not stale_pairs
         payload: dict[str, object] = {
@@ -149,12 +151,14 @@ def create_app(
 
     @app.get("/metrics")
     async def metrics() -> Response:
-        now_ns = time.time_ns()
-        for exchange, pair in tracked_pairs:
-            top = book_manager.eligible_top_of_book(exchange, pair)
-            if top is None:
-                continue
-            book_staleness_seconds.labels(exchange=exchange, pair=pair).set(max(0, (now_ns - top.timestamp_ns) / 1_000_000_000))
+        for status in book_manager.eligibility_for(tracked_pairs):
+            book_eligible.labels(exchange=status.exchange, pair=status.pair).set(
+                1 if status.eligible else 0
+            )
+            if status.age_ns is not None:
+                book_staleness_seconds.labels(
+                    exchange=status.exchange, pair=status.pair
+                ).set(status.age_ns / 1_000_000_000)
         payload, content_type = render_metrics()
         return Response(content=payload, media_type=content_type)
 

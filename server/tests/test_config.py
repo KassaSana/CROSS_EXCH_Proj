@@ -23,6 +23,9 @@ database_path = "arb.sqlite3"
 batch_size = 500
 flush_interval_seconds = 1.0
 queue_maxsize = 1000
+
+[order_books]
+max_age_seconds = 12.5
 """
 
 
@@ -39,6 +42,7 @@ def test_load_config_parses_all_sections(tmp_path: Path) -> None:
     assert config.persistence.batch_size == 500
     assert config.persistence.flush_interval_seconds == 1.0
     assert config.persistence.queue_maxsize == 1000
+    assert config.order_books.max_age_seconds == 12.5
 
 
 def test_load_config_defaults_queue_maxsize_when_missing(tmp_path: Path) -> None:
@@ -47,6 +51,14 @@ def test_load_config_defaults_queue_maxsize_when_missing(tmp_path: Path) -> None
     path.write_text(config_text)
     config = load_config(path)
     assert config.persistence.queue_maxsize == 10_000
+
+
+def test_load_config_defaults_book_age_when_section_missing(tmp_path: Path) -> None:
+    config_text = VALID_CONFIG.replace("\n[order_books]\nmax_age_seconds = 12.5\n", "")
+    path = tmp_path / "config.toml"
+    path.write_text(config_text)
+    config = load_config(path)
+    assert config.order_books.max_age_seconds == 30.0
 
 
 def test_load_config_raises_on_missing_section(tmp_path: Path) -> None:

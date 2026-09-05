@@ -6,8 +6,9 @@ import json
 import logging
 import random
 import time
-from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, replace
+from inspect import isawaitable
 from typing import Any
 
 import httpx
@@ -61,15 +62,21 @@ class ExchangeAdapter(abc.ABC):
         self.reconnect_count = 0
         self.last_error: str | None = None
         self._last_sequence_by_pair: dict[str, int] = {}
-        self._connection_state_callback: Callable[[str, bool], None] | None = None
+        self._connection_state_callback: (
+            Callable[[str, bool], Awaitable[None] | None] | None
+        ) = None
         self._reconnect_requested = False
 
-    def set_connection_state_callback(self, callback: Callable[[str, bool], None]) -> None:
+    def set_connection_state_callback(
+        self, callback: Callable[[str, bool], Awaitable[None] | None]
+    ) -> None:
         self._connection_state_callback = callback
 
-    def _report_connection_state(self, connected: bool) -> None:
+    async def _report_connection_state(self, connected: bool) -> None:
         if self._connection_state_callback is not None:
-            self._connection_state_callback(self.name, connected)
+            result = self._connection_state_callback(self.name, connected)
+            if isawaitable(result):
+                await result
 
     @abc.abstractmethod
     async def subscribe(self, websocket: Any) -> None:
@@ -101,21 +108,26 @@ class ExchangeAdapter(abc.ABC):
             try:
                 async with websockets.connect(self.ws_url, max_size=10_000_000) as websocket:
                     self.connected = True
-                    self._report_connection_state(True)
+                    await self._report_connection_state(True)
                     self.last_error = None
                     await self.reset_state()
                     await self.subscribe(websocket)
                     backoff = 1.0
                     async for message in websocket:
+                        received_monotonic_ns = time.monotonic_ns()
                         self.last_message_ns = time.time_ns()
                         text_message = message.decode() if isinstance(message, bytes) else message
                         for event in await self.parse_message(text_message):
-                            yield event
+                            yield (
+                                event
+                                if event.received_monotonic_ns is not None
+                                else replace(event, received_monotonic_ns=received_monotonic_ns)
+                            )
                         if self._reconnect_requested:
                             raise RuntimeError("adapter requested reconnect")
             except Exception as exc:  # pragma: no cover - reconnect path
                 self.connected = False
-                self._report_connection_state(False)
+                await self._report_connection_state(False)
                 self.last_error = str(exc)
                 self.reconnect_count += 1
                 adapter_reconnects_total.labels(exchange=self.name, reason=type(exc).__name__).inc()
@@ -123,8 +135,9 @@ class ExchangeAdapter(abc.ABC):
                 await asyncio.sleep(backoff + random.uniform(0, 0.5))
                 backoff = min(backoff * 2, 30.0)
             finally:
-                self.connected = False
-                self._report_connection_state(False)
+                if self.connected:
+                    self.connected = False
+                    await self._report_connection_state(False)
 
     @staticmethod
     def encode(payload: dict[str, Any]) -> str:

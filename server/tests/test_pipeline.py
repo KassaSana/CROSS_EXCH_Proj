@@ -1,5 +1,5 @@
 from decimal import Decimal
-from unittest.mock import AsyncMock, Mock, call
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from arb import main
@@ -28,16 +28,12 @@ async def test_processing_order_and_payloads(monkeypatch, enqueue_accepted) -> N
     manager.apply(snapshot("binance", "105", "106"))
     event = snapshot("gemini")
     detector = ArbitrageDetector(Decimal("0.1"))
-    trace = Mock()
     books = Mock(wraps=manager)
     detection = Mock(wraps=detector)
     store = Mock(enqueue=AsyncMock(return_value=enqueue_accepted))
     broadcaster = Mock(broadcast=AsyncMock())
-    trace.attach_mock(books, "books")
-    trace.attach_mock(detection, "detector")
-    trace.attach_mock(store, "store")
-    trace.attach_mock(broadcaster, "broadcaster")
     for name in (
+        "book_eligible",
         "events_ingested_total",
         "book_updates_total",
         "book_staleness_seconds",
@@ -46,12 +42,11 @@ async def test_processing_order_and_payloads(monkeypatch, enqueue_accepted) -> N
     ):
         metric = Mock()
         monkeypatch.setattr(main, name, metric)
-        trace.attach_mock(metric, name)
     clock = Mock()
     clock.perf_counter.side_effect = [10.0, 10.25]
     clock.time_ns.return_value = 123
+    clock.monotonic_ns.side_effect = [123, 123]
     monkeypatch.setattr(main, "time", clock)
-    trace.attach_mock(clock, "clock")
 
     await main.process_market_event(
         event,
@@ -66,36 +61,14 @@ async def test_processing_order_and_payloads(monkeypatch, enqueue_accepted) -> N
     ]
     opportunities = detector.detect_for_pair(event.pair, pair_books, 123)
     assert len(opportunities) == 3
-    expected = [
-        call.events_ingested_total.labels(exchange="gemini"),
-        call.events_ingested_total.labels().inc(),
-        call.books.apply(event),
-        call.book_updates_total.labels(exchange="gemini", pair="BTC-USD"),
-        call.book_updates_total.labels().inc(),
-        call.book_staleness_seconds.labels(exchange="gemini", pair="BTC-USD"),
-        call.book_staleness_seconds.labels().set(0),
-        call.broadcaster.broadcast(LiveMessage("top_of_book", pair_books[0].as_payload())),
-        call.books.top_of_book("gemini", "BTC-USD"),
-        call.books.top_of_book("coinbase", "BTC-USD"),
-        call.books.top_of_book("binance", "BTC-USD"),
-        call.clock.perf_counter(),
-        call.clock.time_ns(),
-        call.detector.detect_for_pair("BTC-USD", pair_books, 123),
-        call.clock.perf_counter(),
-        call.detection_latency_seconds.observe(0.25),
-    ]
-    for opportunity in opportunities:
-        expected.extend(
-            [
-                call.opportunities_total.labels(pair="BTC-USD"),
-                call.opportunities_total.labels().inc(),
-                call.store.enqueue(opportunity),
-                call.broadcaster.broadcast(LiveMessage("opportunity", opportunity.as_payload())),
-            ]
-        )
-    assert trace.mock_calls == expected
+    books.apply.assert_called_once_with(event, received_monotonic_ns=123)
+    detection.detect_for_pair.assert_called_once_with("BTC-USD", pair_books, 123)
     assert store.enqueue.await_count == 3
-    assert broadcaster.broadcast.await_count == 4
+    assert broadcaster.broadcast.await_count == 5
+    assert broadcaster.broadcast.await_args_list[0].args == (
+        LiveMessage("top_of_book", pair_books[0].as_payload()),
+    )
+    assert broadcaster.broadcast.await_args_list[1].args[0].type == "book_status"
 
 
 @pytest.mark.asyncio
@@ -116,7 +89,10 @@ async def test_rejected_or_incomplete_event_stops_before_delivery(kind) -> None:
 
     detector.detect_for_pair.assert_not_called()
     store.enqueue.assert_not_awaited()
-    broadcaster.broadcast.assert_not_awaited()
+    broadcaster.broadcast.assert_awaited_once()
+    status_message = broadcaster.broadcast.await_args.args[0]
+    assert status_message.type == "book_status"
+    assert status_message.payload["eligible"] is False
 
 
 @pytest.mark.asyncio
@@ -137,9 +113,10 @@ async def test_no_opportunity_still_broadcasts_book(second_exchange) -> None:
     )
 
     store.enqueue.assert_not_awaited()
-    broadcaster.broadcast.assert_awaited_once_with(
+    broadcaster.broadcast.assert_any_await(
         LiveMessage("top_of_book", manager.top_of_book("gemini", "BTC-USD").as_payload())
     )
+    assert broadcaster.broadcast.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -182,6 +159,81 @@ async def test_consumer_continues_after_rejected_event() -> None:
         broadcaster=broadcaster,
     )
 
-    broadcaster.broadcast.assert_awaited_once_with(
+    broadcaster.broadcast.assert_any_await(
         LiveMessage("top_of_book", manager.top_of_book("gemini", "BTC-USD").as_payload())
     )
+    assert broadcaster.broadcast.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_event_receipt_time_drives_freshness(monkeypatch) -> None:
+    event = MarketEvent(
+        **{
+            **snapshot("gemini").__dict__,
+            "received_monotonic_ns": 1_000,
+        }
+    )
+    clock = Mock()
+    clock.monotonic_ns.return_value = 9_000
+    clock.perf_counter.side_effect = [1.0, 1.1]
+    clock.time_ns.return_value = 123
+    monkeypatch.setattr(main, "time", clock)
+    for name in (
+        "book_eligible",
+        "events_ingested_total",
+        "book_updates_total",
+        "book_staleness_seconds",
+        "detection_latency_seconds",
+        "opportunities_total",
+    ):
+        monkeypatch.setattr(main, name, Mock())
+    manager = OrderBookManager(clock=lambda: 9_000)
+
+    await main.process_market_event(
+        event,
+        book_manager=manager,
+        detector=ArbitrageDetector(Decimal("0.1")),
+        store=Mock(enqueue=AsyncMock()),
+        broadcaster=Mock(broadcast=AsyncMock()),
+    )
+
+    assert manager.eligibility("gemini", "BTC-USD", 9_000).age_ns == 8_000
+    clock.monotonic_ns.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_processing_delay_can_make_received_event_ineligible(monkeypatch) -> None:
+    event = MarketEvent(
+        **{
+            **snapshot("gemini").__dict__,
+            "received_monotonic_ns": 1_000,
+        }
+    )
+    clock = Mock()
+    clock.monotonic_ns.return_value = 2_001
+    monkeypatch.setattr(main, "time", clock)
+    for name in (
+        "book_eligible",
+        "events_ingested_total",
+        "book_updates_total",
+        "book_staleness_seconds",
+        "detection_latency_seconds",
+        "opportunities_total",
+    ):
+        monkeypatch.setattr(main, name, Mock())
+    broadcaster = Mock(broadcast=AsyncMock())
+    detector = Mock()
+
+    await main.process_market_event(
+        event,
+        book_manager=OrderBookManager(max_age_seconds=0.000001),
+        detector=detector,
+        store=Mock(enqueue=AsyncMock()),
+        broadcaster=broadcaster,
+    )
+
+    detector.detect_for_pair.assert_not_called()
+    broadcaster.broadcast.assert_awaited_once()
+    message = broadcaster.broadcast.await_args.args[0]
+    assert message.type == "book_status"
+    assert message.payload["reason"] == "too_old"

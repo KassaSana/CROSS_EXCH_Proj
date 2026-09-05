@@ -1,12 +1,23 @@
-import { AdapterStatus } from "../api/client";
+import { AdapterStatus, BookStatus } from "../api/client";
 
 type Props = {
   adapters: AdapterStatus[];
+  books: Record<string, BookStatus>;
 };
 
-function statusTone(adapter: AdapterStatus): string {
+function exchangeBooks(adapter: AdapterStatus, books: Record<string, BookStatus>): BookStatus[] {
+  return Object.values(books).filter((book) => book.exchange === adapter.exchange);
+}
+
+function statusTone(adapter: AdapterStatus, books: BookStatus[]): string {
   if (!adapter.connected || adapter.last_message_age_ms === null || adapter.last_message_age_ms > 30_000) {
     return "bg-rose-500";
+  }
+  if (books.length === 0 || books.every((book) => !book.eligible)) {
+    return "bg-rose-500";
+  }
+  if (books.some((book) => !book.eligible)) {
+    return "bg-amber-500";
   }
   if (adapter.last_message_age_ms > 5_000 || adapter.reconnect_count > 0 || adapter.gap_count > 0) {
     return "bg-amber-500";
@@ -14,7 +25,7 @@ function statusTone(adapter: AdapterStatus): string {
   return "bg-emerald-500";
 }
 
-function statusLabel(adapter: AdapterStatus): string {
+function statusLabel(adapter: AdapterStatus, books: BookStatus[]): string {
   if (!adapter.connected) {
     return "Disconnected";
   }
@@ -24,13 +35,19 @@ function statusLabel(adapter: AdapterStatus): string {
   if (adapter.last_message_age_ms > 30_000) {
     return "Stale";
   }
+  if (books.length === 0 || books.every((book) => !book.eligible)) {
+    return "Rebuilding";
+  }
+  if (books.some((book) => !book.eligible)) {
+    return "Degraded";
+  }
   if (adapter.last_message_age_ms > 5_000 || adapter.reconnect_count > 0 || adapter.gap_count > 0) {
     return "Degraded";
   }
   return "Live";
 }
 
-export function AdapterStatusBanner({ adapters }: Props) {
+export function AdapterStatusBanner({ adapters, books }: Props) {
   return (
     <section className="rounded-[2rem] border border-stone-300 bg-white/80 p-5 shadow-sm">
       <div className="flex items-center justify-between">
@@ -46,14 +63,17 @@ export function AdapterStatusBanner({ adapters }: Props) {
             Adapter status is unavailable until the backend exposes `/api/adapters`.
           </article>
         ) : null}
-        {adapters.map((adapter) => (
+        {adapters.map((adapter) => {
+          const statuses = exchangeBooks(adapter, books);
+          const eligibleCount = statuses.filter((book) => book.eligible).length;
+          return (
           <article key={adapter.exchange} className="rounded-3xl border border-stone-200 bg-stone-50 p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className={`h-3 w-3 rounded-full ${statusTone(adapter)}`} />
+                <span className={`h-3 w-3 rounded-full ${statusTone(adapter, statuses)}`} />
                 <strong className="capitalize text-ink">{adapter.exchange}</strong>
               </div>
-              <span className="text-sm text-stone-500">{statusLabel(adapter)}</span>
+              <span className="text-sm text-stone-500">{statusLabel(adapter, statuses)}</span>
             </div>
             <div className="mt-3 space-y-1 text-sm text-stone-600">
               <p>
@@ -62,12 +82,14 @@ export function AdapterStatusBanner({ adapters }: Props) {
               </p>
               <p>Reconnects: {adapter.reconnect_count}</p>
               <p>Gap events: {adapter.gap_count}</p>
+              <p>Eligible books: {eligibleCount}/{statuses.length}</p>
               <p className="truncate" title={adapter.last_error ?? ""}>
                 Last error: {adapter.last_error ?? "--"}
               </p>
             </div>
           </article>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
