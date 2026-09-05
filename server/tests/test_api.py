@@ -278,6 +278,7 @@ class FakeWebSocket:
     def __init__(self, *, fail_on_send: bool = False) -> None:
         self.fail_on_send = fail_on_send
         self.accepted = False
+        self.closed = False
         self.sent: list[dict[str, object]] = []
 
     async def accept(self) -> None:
@@ -288,6 +289,9 @@ class FakeWebSocket:
             raise RuntimeError("client dead")
         self.sent.append(payload)
 
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
+        self.closed = True
+
 
 @pytest.mark.asyncio
 async def test_broadcaster_sends_to_all_clients() -> None:
@@ -296,6 +300,7 @@ async def test_broadcaster_sends_to_all_clients() -> None:
     await broadcaster.connect(a)  # type: ignore[arg-type]
     await broadcaster.connect(b)  # type: ignore[arg-type]
     await broadcaster.broadcast(LiveMessage(type="opportunity", payload={"pair": "BTC-USD"}))
+    await asyncio.sleep(0)
     assert a.sent == [{
         "type": "opportunity",
         "payload": {"pair": "BTC-USD"},
@@ -311,11 +316,13 @@ async def test_broadcaster_drops_dead_clients() -> None:
     await broadcaster.connect(healthy)  # type: ignore[arg-type]
     await broadcaster.connect(dead)  # type: ignore[arg-type]
     await broadcaster.broadcast(LiveMessage(type="top_of_book", payload={"x": 1}))
+    await asyncio.sleep(0)
     # Dead client must be removed from the pool.
     assert dead not in broadcaster._clients
     assert healthy in broadcaster._clients
     # A second broadcast does not raise even though dead is gone.
     await broadcaster.broadcast(LiveMessage(type="top_of_book", payload={"x": 2}))
+    await asyncio.sleep(0)
     assert len(healthy.sent) == 2
 
 
@@ -385,12 +392,40 @@ async def test_initial_state_is_ordered_before_live_updates() -> None:
         lambda: LiveMessage(type="state_snapshot", payload={"books": []}),
     )
     await broadcaster.broadcast(LiveMessage(type="top_of_book", payload={"sequence": 2}))
+    await asyncio.sleep(0)
 
     assert [message["type"] for message in websocket.sent] == [
         "state_snapshot",
         "top_of_book",
     ]
     assert [message["stream_sequence"] for message in websocket.sent] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_slow_client_queue_overflow_does_not_block_broadcast() -> None:
+    release_send = asyncio.Event()
+
+    class SlowWebSocket(FakeWebSocket):
+        async def send_json(self, payload: dict[str, object]) -> None:
+            await release_send.wait()
+            await super().send_json(payload)
+
+    broadcaster = LiveBroadcaster(queue_maxsize=1)
+    slow = SlowWebSocket()
+    await broadcaster.connect(slow)  # type: ignore[arg-type]
+    await broadcaster.broadcast(LiveMessage(type="top_of_book", payload={"sequence": 1}))
+    await asyncio.sleep(0)
+    await broadcaster.broadcast(LiveMessage(type="top_of_book", payload={"sequence": 2}))
+
+    await asyncio.wait_for(
+        broadcaster.broadcast(LiveMessage(type="top_of_book", payload={"sequence": 3})),
+        timeout=0.1,
+    )
+    await asyncio.sleep(0)
+
+    assert slow not in broadcaster._clients
+    assert slow.closed is True
+    release_send.set()
 
 
 def _seed_opp(store: OpportunityStore, **kwargs: Any) -> ArbitrageOpportunity:

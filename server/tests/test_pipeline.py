@@ -1,3 +1,4 @@
+import asyncio
 from decimal import Decimal
 from unittest.mock import AsyncMock, Mock
 
@@ -120,22 +121,39 @@ async def test_no_opportunity_still_broadcasts_book(second_exchange) -> None:
 
 
 @pytest.mark.asyncio
-async def test_broadcast_failure_propagates_before_detection() -> None:
-    detector = Mock()
-    store = Mock(enqueue=AsyncMock())
-    broadcaster = Mock(broadcast=AsyncMock(side_effect=ValueError("send failed")))
+async def test_slow_browser_does_not_block_detection() -> None:
+    release_send = asyncio.Event()
 
-    with pytest.raises(ValueError, match="send failed"):
-        await main.process_market_event(
+    class SlowWebSocket:
+        async def accept(self) -> None:
+            return None
+
+        async def send_json(self, payload: dict[str, object]) -> None:
+            await release_send.wait()
+
+        async def close(self, code: int = 1000, reason: str | None = None) -> None:
+            return None
+
+    manager = OrderBookManager()
+    manager.apply(snapshot("coinbase", "103", "104"))
+    manager.apply(snapshot("binance", "105", "106"))
+    store = Mock(enqueue=AsyncMock())
+    broadcaster = main.LiveBroadcaster(queue_maxsize=1)
+    await broadcaster.connect(SlowWebSocket())  # type: ignore[arg-type]
+
+    await asyncio.wait_for(
+        main.process_market_event(
             snapshot("gemini"),
-            book_manager=OrderBookManager(),
-            detector=detector,
+            book_manager=manager,
+            detector=ArbitrageDetector(Decimal("0.1")),
             store=store,
             broadcaster=broadcaster,
-        )
+        ),
+        timeout=0.1,
+    )
 
-    detector.detect_for_pair.assert_not_called()
-    store.enqueue.assert_not_awaited()
+    assert store.enqueue.await_count == 3
+    release_send.set()
 
 
 @pytest.mark.asyncio

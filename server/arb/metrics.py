@@ -10,6 +10,10 @@ book_staleness_seconds = Gauge("arb_book_staleness_seconds", "Age of last accept
 book_eligible = Gauge("arb_book_eligible", "Whether an order book is eligible for detection", ["exchange", "pair"])
 adapter_reconnects_total = Counter("arb_adapter_reconnects_total", "Adapter reconnect attempts", ["exchange", "reason"])
 ws_clients = Gauge("arb_ws_clients", "Connected WebSocket dashboard clients")
+ws_client_queue_overflows_total = Counter(
+    "arb_ws_client_queue_overflows_total",
+    "Dashboard clients disconnected because their outgoing queue filled",
+)
 reconcile_mismatches_total = Counter("arb_reconcile_mismatches_total", "Snapshot reconciliation mismatches", ["exchange", "pair"])
 persistence_queue_drops_total = Counter(
     "arb_persistence_queue_drops_total",
