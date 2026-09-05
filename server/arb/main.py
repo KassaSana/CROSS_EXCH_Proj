@@ -26,7 +26,7 @@ from arb.metrics import (
 from arb.orderbook import OrderBookManager
 from arb.persistence import OpportunityStore
 from arb.reconcile import SnapshotReconciler
-from arb.types import LiveMessage
+from arb.types import LiveMessage, MarketEvent
 
 logger = structlog.get_logger(__name__)
 
@@ -46,6 +46,56 @@ def configure_logging() -> None:
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
+
+
+async def process_market_event(
+    event: MarketEvent,
+    *,
+    book_manager: OrderBookManager,
+    detector: ArbitrageDetector,
+    store: OpportunityStore,
+    broadcaster: LiveBroadcaster,
+) -> None:
+    """Apply one event, publish its book, then detect and deliver opportunities."""
+    events_ingested_total.labels(exchange=event.exchange).inc()
+    result = book_manager.apply(event)
+    if not result.accepted or result.top_of_book is None:
+        return
+
+    book_updates_total.labels(exchange=event.exchange, pair=event.pair).inc()
+    book_staleness_seconds.labels(exchange=event.exchange, pair=event.pair).set(0)
+    await broadcaster.broadcast(LiveMessage(type="top_of_book", payload=result.top_of_book.as_payload()))
+    pair_books = [
+        top
+        for exchange in ("gemini", "coinbase", "binance")
+        if (top := book_manager.top_of_book(exchange, event.pair)) is not None
+    ]
+    detect_started = time.perf_counter()
+    opportunities = detector.detect_for_pair(event.pair, pair_books, time.time_ns())
+    detection_latency_seconds.observe(time.perf_counter() - detect_started)
+    for opportunity in opportunities:
+        opportunities_total.labels(pair=opportunity.pair).inc()
+        await store.enqueue(opportunity)
+        await broadcaster.broadcast(LiveMessage(type="opportunity", payload=opportunity.as_payload()))
+
+
+async def consume_adapter(
+    adapter: ExchangeAdapter,
+    *,
+    book_manager: OrderBookManager,
+    detector: ArbitrageDetector,
+    store: OpportunityStore,
+    broadcaster: LiveBroadcaster,
+) -> None:
+    """Process each normalized event from an adapter in sequence."""
+    async for event in adapter.connect():
+        await process_market_event(
+            event,
+            book_manager=book_manager,
+            detector=detector,
+            store=store,
+            broadcaster=broadcaster,
+        )
 
 
 async def run_pipeline() -> None:
@@ -84,30 +134,18 @@ async def run_pipeline() -> None:
     persistence_task = asyncio.create_task(store.run())
     reconcile_task = asyncio.create_task(SnapshotReconciler(adapters, book_manager, expected_pairs).run())
 
-    async def consume_adapter(adapter: ExchangeAdapter) -> None:
-        async for event in adapter.connect():
-            events_ingested_total.labels(exchange=event.exchange).inc()
-            result = book_manager.apply(event)
-            if not result.accepted or result.top_of_book is None:
-                continue
-
-            book_updates_total.labels(exchange=event.exchange, pair=event.pair).inc()
-            book_staleness_seconds.labels(exchange=event.exchange, pair=event.pair).set(0)
-            await broadcaster.broadcast(LiveMessage(type="top_of_book", payload=result.top_of_book.as_payload()))
-            pair_books = [
-                top
-                for exchange in ("gemini", "coinbase", "binance")
-                if (top := book_manager.top_of_book(exchange, event.pair)) is not None
-            ]
-            detect_started = time.perf_counter()
-            opportunities = detector.detect_for_pair(event.pair, pair_books, time.time_ns())
-            detection_latency_seconds.observe(time.perf_counter() - detect_started)
-            for opportunity in opportunities:
-                opportunities_total.labels(pair=opportunity.pair).inc()
-                await store.enqueue(opportunity)
-                await broadcaster.broadcast(LiveMessage(type="opportunity", payload=opportunity.as_payload()))
-
-    adapter_tasks = [asyncio.create_task(consume_adapter(adapter)) for adapter in adapters]
+    adapter_tasks = [
+        asyncio.create_task(
+            consume_adapter(
+                adapter,
+                book_manager=book_manager,
+                detector=detector,
+                store=store,
+                broadcaster=broadcaster,
+            )
+        )
+        for adapter in adapters
+    ]
 
     config_uvicorn = uvicorn.Config(app=app, host=config.server.host, port=config.server.port, log_level="info")
     server = uvicorn.Server(config_uvicorn)
