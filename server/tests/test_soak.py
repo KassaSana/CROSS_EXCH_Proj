@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from soak import SoakReport, process_rss_bytes
+from soak import SoakReport, parse_event_counts, process_rss_bytes
 
 
 def test_soak_report_tracks_recovery_and_counters() -> None:
@@ -32,6 +32,7 @@ def test_soak_report_tracks_recovery_and_counters() -> None:
         books=[eligible],
         readiness=readiness,
         overview={"all_time_count": 10},
+        event_counts={"gemini": 100},
         elapsed_seconds=0,
         rss=100,
     )
@@ -40,6 +41,7 @@ def test_soak_report_tracks_recovery_and_counters() -> None:
         books=[ineligible],
         readiness={"status": "not_ready", "background_task_failures": []},
         overview={"all_time_count": 12},
+        event_counts={"gemini": 140},
         elapsed_seconds=5,
         rss=110,
     )
@@ -48,6 +50,7 @@ def test_soak_report_tracks_recovery_and_counters() -> None:
         books=[eligible],
         readiness=readiness,
         overview={"all_time_count": 13},
+        event_counts={"gemini": 175},
         elapsed_seconds=10,
         rss=105,
     )
@@ -57,7 +60,7 @@ def test_soak_report_tracks_recovery_and_counters() -> None:
     markdown = report.markdown()
 
     assert "Opportunities observed: `3`" in markdown
-    assert "| gemini | 1 | 1 | 50 ms | - |" in markdown
+    assert "| gemini | 75 | 1 | 1 | 50 ms | - |" in markdown
     assert "too_old=1" in markdown
     assert "5.0s" in markdown
     assert "Start-to-end change: `+0.00 MiB`" in markdown
@@ -67,3 +70,14 @@ def test_process_rss_reads_current_process() -> None:
     rss = process_rss_bytes(os.getpid())
     assert rss is not None
     assert rss > 0
+
+
+def test_parse_event_counts_reads_prometheus_labels() -> None:
+    metrics = """
+# HELP arb_events_ingested_total Market events ingested
+arb_events_ingested_total{exchange="gemini"} 123.0
+arb_events_ingested_total{exchange="coinbase"} 4.2e+01
+arb_book_eligible{exchange="gemini",pair="BTC-USD"} 1.0
+"""
+
+    assert parse_event_counts(metrics) == {"gemini": 123, "coinbase": 42}
