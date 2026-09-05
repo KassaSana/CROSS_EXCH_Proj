@@ -4,7 +4,9 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import Coroutine
 from decimal import Decimal
+from typing import Any
 
 import structlog
 import uvicorn
@@ -17,6 +19,7 @@ from arb.api import LiveBroadcaster, create_app
 from arb.config import load_config
 from arb.detector import ArbitrageDetector
 from arb.metrics import (
+    background_task_failures_total,
     book_eligible,
     book_staleness_seconds,
     book_updates_total,
@@ -30,6 +33,35 @@ from arb.reconcile import SnapshotReconciler
 from arb.types import LiveMessage, MarketEvent
 
 logger = structlog.get_logger(__name__)
+
+
+class BackgroundTaskSupervisor:
+    def __init__(self) -> None:
+        self._failures: dict[str, str] = {}
+        self._stopped = False
+
+    def create(self, name: str, coroutine: Coroutine[Any, Any, object]) -> asyncio.Task[object]:
+        task = asyncio.create_task(coroutine, name=name)
+        task.add_done_callback(lambda completed: self._task_done(name, completed))
+        return task
+
+    def failures(self) -> list[dict[str, str]]:
+        return [
+            {"task": name, "error": error}
+            for name, error in sorted(self._failures.items())
+        ]
+
+    def stop(self) -> None:
+        self._stopped = True
+
+    def _task_done(self, name: str, task: asyncio.Task[object]) -> None:
+        if self._stopped or task.cancelled():
+            return
+        exception = task.exception()
+        error = "task exited unexpectedly" if exception is None else repr(exception)
+        self._failures[name] = error
+        background_task_failures_total.labels(task=name).inc()
+        logger.error("background_task_failed", task=name, error=error)
 
 
 def configure_logging() -> None:
@@ -137,6 +169,7 @@ async def run_pipeline() -> None:
         BinanceAdapter(config.exchanges.get("binance", [])),
     ]
     broadcaster = LiveBroadcaster()
+    supervisor = BackgroundTaskSupervisor()
     async def report_connection_state(exchange: str, connected: bool) -> None:
         statuses = book_manager.set_exchange_connected(exchange, connected)
         for status in statuses:
@@ -161,14 +194,19 @@ async def run_pipeline() -> None:
         adapters=adapters,
         expected_pairs=expected_pairs,
         started_at_holder=started_at_holder,
+        background_failures=supervisor.failures,
     )
 
     await store.initialize()
-    persistence_task = asyncio.create_task(store.run())
-    reconcile_task = asyncio.create_task(SnapshotReconciler(adapters, book_manager, expected_pairs).run())
+    persistence_task = supervisor.create("persistence", store.run())
+    reconcile_task = supervisor.create(
+        "snapshot_reconciler",
+        SnapshotReconciler(adapters, book_manager, expected_pairs).run(),
+    )
 
     adapter_tasks = [
-        asyncio.create_task(
+        supervisor.create(
+            f"adapter:{adapter.name}",
             consume_adapter(
                 adapter,
                 book_manager=book_manager,
@@ -185,11 +223,18 @@ async def run_pipeline() -> None:
     try:
         await server.serve()
     finally:
+        supervisor.stop()
         for task in adapter_tasks:
             task.cancel()
         reconcile_task.cancel()
         await store.close()
         persistence_task.cancel()
+        await asyncio.gather(
+            *adapter_tasks,
+            reconcile_task,
+            persistence_task,
+            return_exceptions=True,
+        )
 
 
 if __name__ == "__main__":

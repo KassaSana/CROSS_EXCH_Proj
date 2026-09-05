@@ -21,7 +21,7 @@ rule.
 | 3a. Dashboard reconnect | DONE | `dashboard/src/hooks/useWebSocket.ts` |
 | 3b. Backend state restore on connect | DONE | `server/arb/api.py` |
 | 4a. Bounded per-client queues | DONE | `server/arb/api.py` |
-| 4b. Background task visibility | NOT STARTED | `server/arb/main.py` |
+| 4b. Background task visibility | DONE | `server/arb/main.py` |
 | Proof: fixture-driven failure cases | MOSTLY DONE | `server/tests/` |
 | Proof: live soak | NOT STARTED | - |
 
@@ -164,11 +164,14 @@ reconnect and restore state; exchange ingestion and detection continue without
 waiting for browser I/O. Queue overflows increment
 `arb_ws_client_queue_overflows_total`.
 
-### 4b. Background task visibility - NOT STARTED
+### 4b. Background task visibility - DONE
 
-`server/arb/main.py:167-171` creates the persistence, reconcile, and adapter
-tasks with no `add_done_callback`. A crashed task fails silently. Failures should
-surface immediately through logs and readiness status.
+`BackgroundTaskSupervisor` owns the persistence, reconcile, and adapter tasks.
+An unexpected exception or normal return is recorded, increments
+`arb_background_task_failures_total`, emits a structured
+`background_task_failed` error, and makes `/readyz` return 503 with the failed
+task details. Expected cancellation during coordinated shutdown is ignored and
+all tasks are awaited.
 
 ## How we prove it works
 
@@ -193,12 +196,10 @@ Not yet covered:
 
 ## Next up
 
-**Start here: background task supervision (4b).** Surface failures in logs and
-readiness rather than allowing silent task death.
+**Start here: live soak and threshold tuning.** All planned code paths are now
+implemented; the remaining proof requires observation against live traffic.
 
-1. **Background task supervision (4b)** - surface failures in logs and
-   readiness rather than allowing silent task death.
-2. **Live soak run and threshold tuning** - includes re-measuring the Coinbase
+1. **Live soak run and threshold tuning** - includes re-measuring the Coinbase
    event-volume quirk and the 30s age cutoff's exclusion rate.
 
 ### Picking this up in a fresh session
