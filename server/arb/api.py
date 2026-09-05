@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +11,13 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
 from arb.adapters.base import ExchangeAdapter
-from arb.metrics import book_eligible, book_staleness_seconds, render_metrics, ws_clients
+from arb.metrics import (
+    book_eligible,
+    book_staleness_seconds,
+    render_metrics,
+    ws_client_queue_overflows_total,
+    ws_clients,
+)
 from arb.orderbook import OrderBookManager
 from arb.persistence import OpportunityStore
 from arb.types import LiveMessage
@@ -31,9 +38,18 @@ def window_to_ns(window: str) -> int:
 READINESS_WINDOW_NS = 30_000_000_000
 
 
+@dataclass
+class _ClientConnection:
+    queue: asyncio.Queue[dict[str, object]]
+    sender_task: asyncio.Task[None] | None = None
+
+
 class LiveBroadcaster:
-    def __init__(self) -> None:
-        self._clients: set[WebSocket] = set()
+    def __init__(self, queue_maxsize: int = 256) -> None:
+        if queue_maxsize <= 0:
+            raise ValueError("queue_maxsize must be positive")
+        self._clients: dict[WebSocket, _ClientConnection] = {}
+        self._queue_maxsize = queue_maxsize
         self._lock = asyncio.Lock()
         self._stream_sequence = 0
 
@@ -44,31 +60,63 @@ class LiveBroadcaster:
     ) -> None:
         await websocket.accept()
         async with self._lock:
+            connection = _ClientConnection(asyncio.Queue(maxsize=self._queue_maxsize))
             if initial_state is not None:
-                await websocket.send_json(self._envelope(initial_state()))
-            self._clients.add(websocket)
+                connection.queue.put_nowait(self._envelope(initial_state()))
+            self._clients[websocket] = connection
+            connection.sender_task = asyncio.create_task(
+                self._send_messages(websocket, connection)
+            )
             ws_clients.set(len(self._clients))
 
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._lock:
-            self._clients.discard(websocket)
+            connection = self._clients.pop(websocket, None)
             ws_clients.set(len(self._clients))
+        if connection is not None and connection.sender_task is not None:
+            connection.sender_task.cancel()
+            await asyncio.gather(connection.sender_task, return_exceptions=True)
 
     async def broadcast(self, message: LiveMessage) -> None:
+        dropped: list[tuple[WebSocket, _ClientConnection]] = []
         async with self._lock:
             if not self._clients:
                 return
             payload = self._envelope(message)
-            dead: list[WebSocket] = []
-            for client in self._clients:
+            for client, connection in list(self._clients.items()):
                 try:
-                    await client.send_json(payload)
-                except RuntimeError:
-                    dead.append(client)
-            for client in dead:
-                self._clients.discard(client)
-            if dead:
+                    connection.queue.put_nowait(payload)
+                except asyncio.QueueFull:
+                    dropped.append((client, connection))
+                    del self._clients[client]
+                    ws_client_queue_overflows_total.inc()
+            if dropped:
                 ws_clients.set(len(self._clients))
+        for client, connection in dropped:
+            if connection.sender_task is not None:
+                connection.sender_task.cancel()
+            asyncio.create_task(self._close_slow_client(client))
+
+    async def _send_messages(
+        self, websocket: WebSocket, connection: _ClientConnection
+    ) -> None:
+        try:
+            while True:
+                await websocket.send_json(await connection.queue.get())
+        except Exception:
+            pass
+        finally:
+            async with self._lock:
+                if self._clients.get(websocket) is connection:
+                    del self._clients[websocket]
+                    ws_clients.set(len(self._clients))
+
+    @staticmethod
+    async def _close_slow_client(websocket: WebSocket) -> None:
+        try:
+            await websocket.close(code=1013, reason="outgoing queue full")
+        except Exception:
+            pass
 
     def _envelope(self, message: LiveMessage) -> dict[str, object]:
         self._stream_sequence += 1

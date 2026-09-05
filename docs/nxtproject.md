@@ -20,7 +20,7 @@ rule.
 | 2. Explicit book eligibility | DONE | `server/arb/orderbook.py`, `server/arb/main.py` |
 | 3a. Dashboard reconnect | DONE | `dashboard/src/hooks/useWebSocket.ts` |
 | 3b. Backend state restore on connect | DONE | `server/arb/api.py` |
-| 4a. Bounded per-client queues | NOT STARTED | `server/arb/api.py` |
+| 4a. Bounded per-client queues | DONE | `server/arb/api.py` |
 | 4b. Background task visibility | NOT STARTED | `server/arb/main.py` |
 | Proof: fixture-driven failure cases | MOSTLY DONE | `server/tests/` |
 | Proof: live soak | NOT STARTED | - |
@@ -155,17 +155,14 @@ current view; it does not recover every missed live opportunity.
 
 ## 4. Keep dashboard problems from damaging ingestion
 
-### 4a. Bounded per-client queues - NOT STARTED
+### 4a. Bounded per-client queues - DONE
 
-`LiveBroadcaster.broadcast` (`server/arb/api.py:46`) awaits `client.send_json`
-inline for each client, so a slow browser back-pressures exchange ingestion.
-
-Give each dashboard client a bounded outgoing queue and a sender task. A slow
-client gets disconnected and resynchronizes; it cannot hold up processing. This
-is a concrete reason for a queue without introducing a broker.
-
-Note: `test_broadcast_failure_propagates_before_detection` currently asserts the
-existing inline coupling and will need to change with this work.
+Each dashboard connection now owns a bounded 256-message outgoing queue and a
+sender task. `broadcast` only performs non-blocking queue insertion. When a
+client's queue fills, that client is removed and closed with code 1013 so it can
+reconnect and restore state; exchange ingestion and detection continue without
+waiting for browser I/O. Queue overflows increment
+`arb_ws_client_queue_overflows_total`.
 
 ### 4b. Background task visibility - NOT STARTED
 
@@ -191,21 +188,17 @@ Covered today by recorded protocol-shaped messages and controlled failures:
 
 Not yet covered:
 
-- A slow browser leaving exchange ingestion unaffected (blocked on 4a).
 - A live soak test tracking resyncs, excluded books, update age, task failures,
   and recovery duration.
 
 ## Next up
 
-**Start here: broadcaster queues (4a).** Isolate slow dashboard clients from
-the ingestion path before adding background-task supervision.
+**Start here: background task supervision (4b).** Surface failures in logs and
+readiness rather than allowing silent task death.
 
-1. **Broadcaster queues (4a)** - note this requires
-   rewriting `test_broadcast_failure_propagates_before_detection`, which
-   currently pins the inline coupling.
-2. **Background task supervision (4b)** - surface failures in logs and
+1. **Background task supervision (4b)** - surface failures in logs and
    readiness rather than allowing silent task death.
-3. **Live soak run and threshold tuning** - includes re-measuring the Coinbase
+2. **Live soak run and threshold tuning** - includes re-measuring the Coinbase
    event-volume quirk and the 30s age cutoff's exclusion rate.
 
 ### Picking this up in a fresh session
