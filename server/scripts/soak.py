@@ -291,13 +291,11 @@ async def run_soak(
         while True:
             elapsed = loop.time() - started
             try:
-                adapters, books, readiness, overview, event_counts = await asyncio.gather(
-                    fetch_json(client, "/api/adapters"),
-                    fetch_json(client, "/api/book-status"),
-                    fetch_json(client, "/readyz"),
-                    fetch_json(client, "/api/system/overview"),
-                    fetch_event_counts(client),
-                )
+                adapters = await fetch_json(client, "/api/adapters")
+                books = await fetch_json(client, "/api/book-status")
+                readiness = await fetch_json(client, "/readyz")
+                overview = await fetch_json(client, "/api/system/overview")
+                event_counts = await fetch_event_counts(client)
                 assert isinstance(adapters, list)
                 assert isinstance(books, list)
                 assert isinstance(readiness, dict)
