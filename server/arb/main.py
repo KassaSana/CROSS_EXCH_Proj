@@ -57,19 +57,18 @@ async def process_market_event(
     broadcaster: LiveBroadcaster,
 ) -> None:
     """Apply one event, publish its book, then detect and deliver opportunities."""
+    received_monotonic_ns = time.monotonic_ns()
     events_ingested_total.labels(exchange=event.exchange).inc()
-    result = book_manager.apply(event)
+    result = book_manager.apply(event, received_monotonic_ns=received_monotonic_ns)
     if not result.accepted or result.top_of_book is None:
         return
 
     book_updates_total.labels(exchange=event.exchange, pair=event.pair).inc()
     book_staleness_seconds.labels(exchange=event.exchange, pair=event.pair).set(0)
     await broadcaster.broadcast(LiveMessage(type="top_of_book", payload=result.top_of_book.as_payload()))
-    pair_books = [
-        top
-        for exchange in ("gemini", "coinbase", "binance")
-        if (top := book_manager.top_of_book(exchange, event.pair)) is not None
-    ]
+    pair_books = book_manager.eligible_books(
+        event.pair, ("gemini", "coinbase", "binance"), received_monotonic_ns
+    )
     detect_started = time.perf_counter()
     opportunities = detector.detect_for_pair(event.pair, pair_books, time.time_ns())
     detection_latency_seconds.observe(time.perf_counter() - detect_started)
@@ -115,6 +114,8 @@ async def run_pipeline() -> None:
         CoinbaseAdapter(config.exchanges.get("coinbase", [])),
         BinanceAdapter(config.exchanges.get("binance", [])),
     ]
+    for adapter in adapters:
+        adapter.set_connection_state_callback(book_manager.set_exchange_connected)
     broadcaster = LiveBroadcaster()
     expected_pairs = [
         *(("gemini", normalize_gemini_symbol(symbol)) for symbol in config.exchanges.get("gemini", [])),

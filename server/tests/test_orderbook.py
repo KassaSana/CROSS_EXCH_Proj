@@ -160,6 +160,8 @@ def test_top_of_book_none_when_empty_side() -> None:
     manager = OrderBookManager()
     manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[]))
     assert manager.top_of_book("gemini", "BTC-USD") is None
+    assert manager.eligibility("gemini", "BTC-USD").eligible is False
+    assert manager.eligibility("gemini", "BTC-USD").reason == "incomplete"
 
 
 def test_size_zero_in_snapshot_does_not_create_level() -> None:
@@ -185,3 +187,45 @@ def test_remove_nonexistent_level_is_noop() -> None:
     result = manager.apply(event(kind=EventKind.DELTA, sequence=2, bids=[("50", "0")], asks=[]))
     assert result.accepted is True
     assert manager.best_bid("gemini", "BTC-USD") == Decimal("100")
+
+
+def test_book_becomes_ineligible_when_age_limit_is_exceeded() -> None:
+    now = [1_000]
+    manager = OrderBookManager(max_age_seconds=0.000001, clock=lambda: now[0])
+    manager.apply(
+        event(
+            kind=EventKind.SNAPSHOT,
+            sequence=1,
+            bids=[("100", "1")],
+            asks=[("101", "1")],
+        ),
+        received_monotonic_ns=now[0],
+    )
+    assert manager.eligibility("gemini", "BTC-USD", now[0]).eligible is True
+
+    now[0] += 1_001
+    status = manager.eligibility("gemini", "BTC-USD", now[0])
+    assert status.eligible is False
+    assert status.reason == "too_old"
+    assert manager.eligible_top_of_book("gemini", "BTC-USD", now[0]) is None
+
+
+def test_disconnect_invalidates_book_until_new_snapshot() -> None:
+    manager = OrderBookManager()
+    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")]))
+    assert manager.eligibility("gemini", "BTC-USD").eligible is True
+
+    manager.set_exchange_connected("gemini", False)
+    status = manager.eligibility("gemini", "BTC-USD")
+    assert status.eligible is False
+    assert status.reason == "disconnected"
+    assert manager.top_of_book("gemini", "BTC-USD") is None
+
+    manager.set_exchange_connected("gemini", True)
+    delta = manager.apply(event(kind=EventKind.DELTA, sequence=2, bids=[("100.5", "1")], asks=[]))
+    assert delta.accepted is False
+    assert delta.reason == "book_stale"
+
+    snapshot = manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("99", "1")], asks=[("100", "1")]))
+    assert snapshot.accepted is True
+    assert manager.eligibility("gemini", "BTC-USD").eligible is True

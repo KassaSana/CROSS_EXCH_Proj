@@ -135,8 +135,8 @@ def create_app(
         disconnected = [adapter.name for adapter in adapter_list if not adapter.connected]
         stale_pairs: list[dict[str, object]] = []
         for exchange, pair in tracked_pairs:
-            top = book_manager.top_of_book(exchange, pair)
-            if top is None or now_ns - top.timestamp_ns > READINESS_WINDOW_NS:
+            status = book_manager.eligibility(exchange, pair)
+            if not status.eligible:
                 stale_pairs.append({"exchange": exchange, "pair": pair})
 
         ready = not disconnected and not stale_pairs
@@ -151,7 +151,7 @@ def create_app(
     async def metrics() -> Response:
         now_ns = time.time_ns()
         for exchange, pair in tracked_pairs:
-            top = book_manager.top_of_book(exchange, pair)
+            top = book_manager.eligible_top_of_book(exchange, pair)
             if top is None:
                 continue
             book_staleness_seconds.labels(exchange=exchange, pair=pair).set(max(0, (now_ns - top.timestamp_ns) / 1_000_000_000))
