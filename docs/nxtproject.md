@@ -18,8 +18,8 @@ rule.
 | 1b. Coinbase sequencing | DONE | `server/arb/adapters/coinbase.py` |
 | 1c. Gemini migration | DONE | `server/arb/adapters/gemini.py` |
 | 2. Explicit book eligibility | DONE | `server/arb/orderbook.py`, `server/arb/main.py` |
-| 3a. Dashboard reconnect | NOT STARTED | `dashboard/src/hooks/useWebSocket.ts` |
-| 3b. Backend state restore on connect | NOT STARTED | `server/arb/api.py` |
+| 3a. Dashboard reconnect | DONE | `dashboard/src/hooks/useWebSocket.ts` |
+| 3b. Backend state restore on connect | DONE | `server/arb/api.py` |
 | 4a. Bounded per-client queues | NOT STARTED | `server/arb/api.py` |
 | 4b. Background task visibility | NOT STARTED | `server/arb/main.py` |
 | Proof: fixture-driven failure cases | MOSTLY DONE | `server/tests/` |
@@ -129,37 +129,29 @@ but valid market, then tune it explicitly rather than by inheritance.
 
 ## 3. Reconnect the dashboard and restore its state
 
-### 3a. Dashboard reconnect - NOT STARTED
+### 3a. Dashboard reconnect - DONE
 
-`dashboard/src/hooks/useWebSocket.ts` is still 19 lines: it opens one socket and
-never retries. Extend that same hook with:
+`dashboard/src/hooks/useWebSocket.ts` now maintains one active socket and one
+retry timer, exposes connecting/connected/reconnecting state, and reconnects
+with jittered exponential backoff capped at 30 seconds. Socket generations stop
+callbacks from superseded connections, cleanup prevents post-unmount retries,
+and the retry counter resets only after a stable connection.
 
-- Connection status: connecting, connected, reconnecting.
-- Exponential retry delays with jitter, capped at 30 seconds.
-- One active socket and one retry timer.
-- Cleanup that prevents retries after unmount.
-- Protection against callbacks from an old socket updating current state.
-- Retry-counter reset after a stable connection.
+The dashboard clears cached books as soon as the socket disconnects and shows
+the stream connection state in its health banner.
 
-### 3b. Backend state restore on connect - NOT STARTED
+### 3b. Backend state restore on connect - DONE
 
-`/ws/live` (`server/arb/api.py:166`) accepts the socket and loops on
-`receive_text`. It sends no current state.
+`/ws/live` sends a `state_snapshot` containing all canonical book statuses and
+only the currently eligible top-of-book values before registering the client
+for live broadcasts. A broadcaster lock and monotonically increasing
+`stream_sequence` order that snapshot before later live messages; the dashboard
+rejects older envelopes on each socket generation.
 
-On disconnection the dashboard should mark cached books unavailable. On
-reconnection the backend should send current eligible books before subsequent
-live updates, with explicit ordering so an older snapshot cannot overwrite newer
-data.
-
-Note this is partially masked today: `dashboard/src/pages/Dashboard.tsx` polls
-`/book-status` every 2 seconds and drops cached books that are no longer
-eligible, so the UI self-corrects within a couple of seconds. That is a
-workaround, not the ordering guarantee.
-
-Historical opportunities and statistics can be refreshed over HTTP. The
-initial-history request must not overwrite opportunities received while that
-request was pending. This restores the current view; it does not recover every
-missed live opportunity.
+Historical opportunities and statistics refresh after each connection. Fetched
+history is merged and deduplicated with live opportunities, so a pending HTTP
+request cannot overwrite events that arrived over the socket. This restores the
+current view; it does not recover every missed live opportunity.
 
 ## 4. Keep dashboard problems from damaging ingestion
 
@@ -199,22 +191,20 @@ Covered today by recorded protocol-shaped messages and controlled failures:
 
 Not yet covered:
 
-- Dashboard disconnect/reconnect without duplicate sockets or stale-state
-  overwrite (blocked on 3a).
 - A slow browser leaving exchange ingestion unaffected (blocked on 4a).
 - A live soak test tracking resyncs, excluded books, update age, task failures,
   and recovery duration.
 
 ## Next up
 
-**Start here: dashboard reconnect (3a) plus backend state restore (3b).** Do
-these together so reconnecting cannot leave the UI showing stale state.
+**Start here: broadcaster queues (4a).** Isolate slow dashboard clients from
+the ingestion path before adding background-task supervision.
 
-1. **Dashboard reconnect (3a) plus backend state restore (3b)** - do these
-   together; a reconnect without a state refresh just shows stale books.
-2. **Broadcaster queues (4a) and task supervision (4b)** - note 4a requires
+1. **Broadcaster queues (4a)** - note this requires
    rewriting `test_broadcast_failure_propagates_before_detection`, which
    currently pins the inline coupling.
+2. **Background task supervision (4b)** - surface failures in logs and
+   readiness rather than allowing silent task death.
 3. **Live soak run and threshold tuning** - includes re-measuring the Coinbase
    event-volume quirk and the 30s age cutoff's exclusion rate.
 

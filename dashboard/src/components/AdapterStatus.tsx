@@ -1,8 +1,10 @@
 import { AdapterStatus, BookStatus } from "../api/client";
+import { ConnectionStatus } from "../hooks/useWebSocket";
 
 type Props = {
   adapters: AdapterStatus[];
   books: Record<string, BookStatus>;
+  connectionStatus: ConnectionStatus;
 };
 
 function exchangeBooks(adapter: AdapterStatus, books: Record<string, BookStatus>): BookStatus[] {
@@ -47,7 +49,7 @@ function statusLabel(adapter: AdapterStatus, books: BookStatus[]): string {
   return "Live";
 }
 
-export function AdapterStatusBanner({ adapters, books }: Props) {
+export function AdapterStatusBanner({ adapters, books, connectionStatus }: Props) {
   return (
     <section className="rounded-[2rem] border border-stone-300 bg-white/80 p-5 shadow-sm">
       <div className="flex items-center justify-between">
@@ -55,7 +57,9 @@ export function AdapterStatusBanner({ adapters, books }: Props) {
           <p className="text-xs uppercase tracking-[0.2em] text-stone-500">Adapter Health</p>
           <h2 className="mt-2 font-display text-2xl text-ink">Exchange Connectivity</h2>
         </div>
-        <p className="text-sm text-stone-500">Polled every 2 seconds</p>
+        <p className="text-sm capitalize text-stone-500">
+          Dashboard stream: {connectionStatus}
+        </p>
       </div>
       <div className="mt-5 grid gap-4 md:grid-cols-3">
         {adapters.length === 0 ? (

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,29 +34,49 @@ READINESS_WINDOW_NS = 30_000_000_000
 class LiveBroadcaster:
     def __init__(self) -> None:
         self._clients: set[WebSocket] = set()
+        self._lock = asyncio.Lock()
+        self._stream_sequence = 0
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(
+        self,
+        websocket: WebSocket,
+        initial_state: Callable[[], LiveMessage] | None = None,
+    ) -> None:
         await websocket.accept()
-        self._clients.add(websocket)
-        ws_clients.set(len(self._clients))
+        async with self._lock:
+            if initial_state is not None:
+                await websocket.send_json(self._envelope(initial_state()))
+            self._clients.add(websocket)
+            ws_clients.set(len(self._clients))
 
     async def disconnect(self, websocket: WebSocket) -> None:
-        self._clients.discard(websocket)
-        ws_clients.set(len(self._clients))
+        async with self._lock:
+            self._clients.discard(websocket)
+            ws_clients.set(len(self._clients))
 
     async def broadcast(self, message: LiveMessage) -> None:
-        if not self._clients:
-            return
-        dead: list[WebSocket] = []
-        for client in self._clients:
-            try:
-                await client.send_json({"type": message.type, "payload": message.payload})
-            except RuntimeError:
-                dead.append(client)
-        for client in dead:
-            self._clients.discard(client)
-        if dead:
-            ws_clients.set(len(self._clients))
+        async with self._lock:
+            if not self._clients:
+                return
+            payload = self._envelope(message)
+            dead: list[WebSocket] = []
+            for client in self._clients:
+                try:
+                    await client.send_json(payload)
+                except RuntimeError:
+                    dead.append(client)
+            for client in dead:
+                self._clients.discard(client)
+            if dead:
+                ws_clients.set(len(self._clients))
+
+    def _envelope(self, message: LiveMessage) -> dict[str, object]:
+        self._stream_sequence += 1
+        return {
+            "type": message.type,
+            "payload": message.payload,
+            "stream_sequence": self._stream_sequence,
+        }
 
 
 def create_app(
@@ -164,7 +185,23 @@ def create_app(
 
     @app.websocket("/ws/live")
     async def live_updates(websocket: WebSocket) -> None:
-        await broadcaster.connect(websocket)
+        def current_state() -> LiveMessage:
+            statuses = book_manager.eligibility_for(tracked_pairs)
+            books = [
+                top.as_payload()
+                for status in statuses
+                if status.eligible
+                if (top := book_manager.top_of_book(status.exchange, status.pair)) is not None
+            ]
+            return LiveMessage(
+                type="state_snapshot",
+                payload={
+                    "books": books,
+                    "statuses": [status.as_payload() for status in statuses],
+                },
+            )
+
+        await broadcaster.connect(websocket, current_state)
         try:
             while True:
                 await websocket.receive_text()
