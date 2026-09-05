@@ -279,13 +279,16 @@ def test_binance_depth_update_parsing() -> None:
     assert events[0].pair == "BTC-USD"
 
 
-def test_gemini_snapshot_parsing() -> None:
+def test_gemini_first_depth_frame_is_stream_snapshot() -> None:
     adapter = GeminiAdapter(["btcusd"])
-    payload = '{"symbol":"btcusd","lastUpdateId":7,"bids":[["100","1"]],"asks":[["101","2"]]}'
+    payload = '{"e":"depthUpdate","E":123,"s":"btcusd","U":5,"u":7,"b":[["100","1"]],"a":[["101","2"]]}'
     events = asyncio.run(adapter.parse_message(payload))
     assert len(events) == 1
     assert events[0].kind is EventKind.SNAPSHOT
     assert events[0].pair == "BTC-USD"
+    assert events[0].sequence == 1
+    assert events[0].exchange_first_sequence == 5
+    assert events[0].exchange_last_sequence == 7
 
 
 def test_binance_subsequent_deltas_are_sequential() -> None:
@@ -346,29 +349,56 @@ def test_coinbase_update_before_stream_snapshot_is_ignored() -> None:
     assert snapshot[0].kind is EventKind.SNAPSHOT
 
 
-def test_gemini_first_v2_message_triggers_rest_snapshot() -> None:
-    # Gemini v2 socket_sequence is connection-global (not per-symbol), so the adapter
-    # fetches a REST snapshot on the first WS message for each pair instead of
-    # relying on socket_sequence for gap detection.
+def test_gemini_subscribes_to_current_depth_stream_with_full_snapshot() -> None:
     adapter = GeminiAdapter(["btcusd"])
-    _stub_snapshot(adapter)
-    events = asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["buy","100","1"],["sell","101","2"]]}'))
-    assert len(events) == 1
-    assert events[0].kind is EventKind.SNAPSHOT
+    sent: list[str] = []
+
+    class Socket:
+        async def send(self, message: str) -> None:
+            sent.append(message)
+
+    asyncio.run(adapter.subscribe(Socket()))
+
+    assert adapter.ws_url == "wss://ws.gemini.com?snapshot=-1"
+    assert json.loads(sent[0]) == {
+        "id": 1,
+        "method": "SUBSCRIBE",
+        "params": ["btcusd@depth"],
+    }
 
 
-def test_gemini_subsequent_v2_messages_are_sequential_deltas() -> None:
+def test_gemini_subsequent_depth_frames_are_sequential_local_deltas() -> None:
     adapter = GeminiAdapter(["btcusd"])
-    _stub_snapshot(adapter)
-    # First message → REST snapshot.
-    asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["buy","100","1"],["sell","101","2"]]}'))
-    # Second and third messages → sequential DELTAs, no gap triggered.
-    e2 = asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["buy","100","1"]]}'))
-    e3 = asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["sell","101","1"]]}'))
+    asyncio.run(adapter.parse_message('{"e":"depthUpdate","s":"BTCUSD","U":10,"u":12,"b":[["100","1"]],"a":[["101","2"]]}'))
+    e2 = asyncio.run(adapter.parse_message('{"e":"depthUpdate","s":"BTCUSD","U":13,"u":15,"b":[["100","2"]],"a":[]}'))
+    e3 = asyncio.run(adapter.parse_message('{"e":"depthUpdate","s":"BTCUSD","U":15,"u":18,"b":[],"a":[["101","1"]]}'))
     assert e2[0].kind is EventKind.DELTA
     assert e3[0].kind is EventKind.DELTA
     assert e3[0].sequence == e2[0].sequence + 1
+    assert e3[0].exchange_first_sequence == 15
+    assert e3[0].exchange_last_sequence == 18
     assert adapter.gap_count == 0
+
+
+def test_gemini_duplicate_depth_frame_is_ignored() -> None:
+    adapter = GeminiAdapter(["btcusd"])
+    message = '{"e":"depthUpdate","s":"BTCUSD","U":10,"u":12,"b":[],"a":[]}'
+    asyncio.run(adapter.parse_message(message))
+
+    assert asyncio.run(adapter.parse_message(message)) == []
+    assert adapter.gap_count == 0
+
+
+def test_gemini_gap_requests_reconnect_and_does_not_emit_delta() -> None:
+    adapter = GeminiAdapter(["btcusd"])
+    asyncio.run(adapter.parse_message('{"e":"depthUpdate","s":"BTCUSD","U":10,"u":12,"b":[],"a":[]}'))
+
+    events = asyncio.run(adapter.parse_message('{"e":"depthUpdate","s":"BTCUSD","U":15,"u":16,"b":[],"a":[]}'))
+
+    assert events == []
+    assert adapter.gap_count == 1
+    assert adapter._reconnect_requested is True
+    assert "BTC-USD" not in adapter._initialized
 
 
 def test_binance_subsequent_messages_dont_trigger_rest_calls() -> None:
@@ -679,13 +709,13 @@ def test_binance_snapshot_requests_documented_depth_limit() -> None:
 
 def test_gemini_reset_state_forces_resnapshot_after_reconnect() -> None:
     adapter = GeminiAdapter(["btcusd"])
-    _stub_snapshot(adapter)
-    asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["buy","100","1"]]}'))
-    asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["sell","101","1"]]}'))
+    asyncio.run(adapter.parse_message('{"e":"depthUpdate","s":"BTCUSD","U":1,"u":1,"b":[["100","1"]],"a":[["101","1"]]}'))
+    delta = asyncio.run(adapter.parse_message('{"e":"depthUpdate","s":"BTCUSD","U":2,"u":2,"b":[["100","2"]],"a":[]}'))
+    assert delta[0].kind is EventKind.DELTA
 
     asyncio.run(adapter.reset_state())
 
-    events = asyncio.run(adapter.parse_message('{"type":"l2_updates","symbol":"BTCUSD","changes":[["buy","100","1"]]}'))
+    events = asyncio.run(adapter.parse_message('{"e":"depthUpdate","s":"BTCUSD","U":10,"u":10,"b":[["100","1"]],"a":[["101","1"]]}'))
     assert events[0].kind is EventKind.SNAPSHOT
 
 

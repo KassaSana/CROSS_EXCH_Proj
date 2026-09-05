@@ -16,7 +16,7 @@ rule.
 | --- | --- | --- |
 | 1a. Binance.US snapshot-and-buffer | DONE | `server/arb/adapters/binance.py` |
 | 1b. Coinbase sequencing | DONE | `server/arb/adapters/coinbase.py` |
-| 1c. Gemini migration | NOT STARTED | `server/arb/adapters/gemini.py` |
+| 1c. Gemini migration | DONE | `server/arb/adapters/gemini.py` |
 | 2. Explicit book eligibility | DONE | `server/arb/orderbook.py`, `server/arb/main.py` |
 | 3a. Dashboard reconnect | NOT STARTED | `dashboard/src/hooks/useWebSocket.ts` |
 | 3b. Backend state restore on connect | NOT STARTED | `server/arb/api.py` |
@@ -72,21 +72,19 @@ Left deliberately open: the "Coinbase receives very few events in production"
 quirk in `CLAUDE.md` predates this fix and has not been re-measured against a
 live run. Check it during the soak.
 
-### 1c. Gemini - NOT STARTED
+### 1c. Gemini - DONE
 
-`server/arb/adapters/gemini.py` is unchanged and still has the exact defect this
-plan opens with:
+`server/arb/adapters/gemini.py` now uses the current `wss://ws.gemini.com`
+differential depth stream with `snapshot=-1`. The first `depthUpdate` for each
+pair is emitted as the full snapshot; subsequent frames validate Gemini's
+`U/u` exchange update ranges before being assigned consecutive local sequences.
+Duplicate or covered frames are ignored, while a skipped range invalidates the
+pair and requests a reconnect so a new stream snapshot rebuilds it.
 
-- It uses the now-archived v2 `l2_updates` feed.
-- That feed's initial response already contains book state, which the adapter
-  discards in favour of a separate `/v1/book` REST snapshot.
-- Deltas get `self._pair_seq[pair] + 1` local counters, so a missed exchange
-  update is invisible.
-
-Migrate as its own change to the current feed: initial full snapshot via
-`snapshot=-1`, differential updates carrying `U/u` update IDs. Similar field
-names do not imply Binance semantics - Gemini needs its own fixtures and its own
-continuity rules.
+The REST book endpoint remains only for `SnapshotReconciler` comparisons. It is
+no longer part of stream initialization or recovery. Protocol-shaped Gemini
+fixtures and adapter tests cover subscription shape, initial snapshot, overlap,
+duplicates, gaps, and resnapshot after reconnect.
 
 ## 2. Make book eligibility explicit - DONE (commits 71efe94, e52c6bf)
 
@@ -209,24 +207,15 @@ Not yet covered:
 
 ## Next up
 
-**Start here: 1c, the Gemini migration.** It is the last adapter still faking
-continuity with a local counter, and it is self-contained - one file plus
-fixtures, no consumers change.
+**Start here: dashboard reconnect (3a) plus backend state restore (3b).** Do
+these together so reconnecting cannot leave the UI showing stale state.
 
-1. **Gemini migration (1c)** - move `server/arb/adapters/gemini.py` off the
-   archived v2 feed to the current depth stream: subscribe with `snapshot=-1`
-   for the initial full book, then validate the `U/u` update IDs on the
-   differential updates. Delete the `/v1/book` REST snapshot path from the
-   initialization flow. Write Gemini's own fixtures - do not reuse Binance's
-   assumptions about what `U/u` mean. Mirror the Binance tests in
-   `server/tests/test_adapters/test_adapters.py` for the gap, reconnect, and
-   resnapshot cases.
-2. **Dashboard reconnect (3a) plus backend state restore (3b)** - do these
+1. **Dashboard reconnect (3a) plus backend state restore (3b)** - do these
    together; a reconnect without a state refresh just shows stale books.
-3. **Broadcaster queues (4a) and task supervision (4b)** - note 4a requires
+2. **Broadcaster queues (4a) and task supervision (4b)** - note 4a requires
    rewriting `test_broadcast_failure_propagates_before_detection`, which
    currently pins the inline coupling.
-4. **Live soak run and threshold tuning** - includes re-measuring the Coinbase
+3. **Live soak run and threshold tuning** - includes re-measuring the Coinbase
    event-volume quirk and the 30s age cutoff's exclusion rate.
 
 ### Picking this up in a fresh session
