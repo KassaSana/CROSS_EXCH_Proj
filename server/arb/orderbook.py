@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
 from bisect import bisect_left
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from arb.types import (
+    BookEligibility,
     BookStateSnapshot,
     BookUpdateResult,
     EventKind,
@@ -65,6 +67,10 @@ class OrderBook:
     sequence: int | None = None
     stale: bool = True
     last_timestamp_ns: int = 0
+    initialized: bool = False
+    continuous: bool = False
+    connected: bool = True
+    last_received_monotonic_ns: int | None = None
 
     def clear(self) -> None:
         self.bids.clear()
@@ -72,22 +78,43 @@ class OrderBook:
         self.sequence = None
         self.stale = True
         self.last_timestamp_ns = 0
+        self.initialized = False
+        self.continuous = False
+        self.last_received_monotonic_ns = None
 
 
 class OrderBookManager:
-    def __init__(self) -> None:
+    def __init__(self, max_age_seconds: float = 30.0, clock=time.monotonic_ns) -> None:
         self._books: dict[tuple[str, str], OrderBook] = {}
+        self._max_age_ns = int(max_age_seconds * 1_000_000_000)
+        self._clock = clock
+        self._exchange_connected: dict[str, bool] = {}
 
-    def apply(self, event: MarketEvent) -> BookUpdateResult:
+    def set_exchange_connected(self, exchange: str, connected: bool) -> None:
+        self._exchange_connected[exchange] = connected
+        for (book_exchange, _pair), book in self._books.items():
+            if book_exchange != exchange:
+                continue
+            book.connected = connected
+            if not connected:
+                book.clear()
+                book.connected = False
+
+    def apply(self, event: MarketEvent, received_monotonic_ns: int | None = None) -> BookUpdateResult:
         key = (event.exchange, event.pair)
         book = self._books.setdefault(key, OrderBook())
+        book.connected = self._exchange_connected.get(event.exchange, True)
+        received_at = self._clock() if received_monotonic_ns is None else received_monotonic_ns
+
+        if not book.connected:
+            return BookUpdateResult(accepted=False, reason="disconnected", stale=True)
 
         if event.kind is EventKind.SNAPSHOT:
-            self._apply_snapshot(book, event)
+            self._apply_snapshot(book, event, received_at)
             top = self.top_of_book(event.exchange, event.pair)
             return BookUpdateResult(accepted=True, top_of_book=top)
 
-        if book.stale or book.sequence is None:
+        if not book.initialized or not book.continuous or book.stale or book.sequence is None:
             return BookUpdateResult(accepted=False, reason="book_stale", stale=True)
 
         if event.sequence <= book.sequence:
@@ -97,7 +124,7 @@ class OrderBookManager:
             book.clear()
             return BookUpdateResult(accepted=False, reason="sequence_gap", stale=True)
 
-        self._apply_delta(book, event)
+        self._apply_delta(book, event, received_at)
         top = self.top_of_book(event.exchange, event.pair)
         if top is None:
             return BookUpdateResult(accepted=False, reason="book_incomplete")
@@ -139,15 +166,72 @@ class OrderBookManager:
             timestamp_ns=book.last_timestamp_ns,
         )
 
+    def eligibility(
+        self, exchange: str, pair: str, now_monotonic_ns: int | None = None
+    ) -> BookEligibility:
+        book = self._books.get((exchange, pair))
+        now = self._clock() if now_monotonic_ns is None else now_monotonic_ns
+        if book is None:
+            return BookEligibility(
+                exchange, pair, False, False, False, None, self._max_age_ns, False, "missing"
+            )
+        age_ns = (
+            None
+            if book.last_received_monotonic_ns is None
+            else max(0, now - book.last_received_monotonic_ns)
+        )
+        reason = None
+        if not book.connected:
+            reason = "disconnected"
+        elif not book.initialized:
+            reason = "uninitialized"
+        elif not book.continuous or book.stale:
+            reason = "discontinuous"
+        elif age_ns is None or age_ns > self._max_age_ns:
+            reason = "too_old"
+        else:
+            top = self.top_of_book(exchange, pair)
+            if top is None:
+                reason = "incomplete"
+            elif top.best_bid_price >= top.best_ask_price:
+                reason = "crossed"
+        return BookEligibility(
+            exchange, pair, book.initialized, book.continuous, book.connected,
+            age_ns, self._max_age_ns, reason is None, reason,
+        )
+
+    def eligible_top_of_book(
+        self, exchange: str, pair: str, now_monotonic_ns: int | None = None
+    ) -> TopOfBook | None:
+        if not self.eligibility(exchange, pair, now_monotonic_ns).eligible:
+            return None
+        return self.top_of_book(exchange, pair)
+
+    def eligible_books(
+        self, pair: str, exchanges: tuple[str, ...], now_monotonic_ns: int | None = None
+    ) -> list[TopOfBook]:
+        books = [
+            top
+            for exchange in exchanges
+            if (top := self.eligible_top_of_book(exchange, pair, now_monotonic_ns)) is not None
+        ]
+        return books if len(books) >= 2 else []
+
     def snapshot(self, exchange: str, pair: str) -> BookStateSnapshot:
         book = self._books.get((exchange, pair))
         if not book:
             return BookStateSnapshot(exchange=exchange, pair=pair, sequence=None, stale=True)
+        status = self.eligibility(exchange, pair)
         return BookStateSnapshot(
             exchange=exchange,
             pair=pair,
             sequence=book.sequence,
             stale=book.stale,
+            initialized=status.initialized,
+            continuous=status.continuous,
+            connected=status.connected,
+            age_ns=status.age_ns,
+            eligible=status.eligible,
             top_of_book=self.top_of_book(exchange, pair),
         )
 
@@ -160,7 +244,7 @@ class OrderBookManager:
             return None
         return (book.bids.top_n(limit), book.asks.top_n(limit))
 
-    def _apply_snapshot(self, book: OrderBook, event: MarketEvent) -> None:
+    def _apply_snapshot(self, book: OrderBook, event: MarketEvent, received_monotonic_ns: int) -> None:
         book.clear()
         for level in event.bids:
             book.bids.set_level(level.price, level.size)
@@ -168,12 +252,16 @@ class OrderBookManager:
             book.asks.set_level(level.price, level.size)
         book.sequence = event.sequence
         book.stale = False
+        book.initialized = True
+        book.continuous = True
         book.last_timestamp_ns = event.timestamp_ns
+        book.last_received_monotonic_ns = received_monotonic_ns
 
-    def _apply_delta(self, book: OrderBook, event: MarketEvent) -> None:
+    def _apply_delta(self, book: OrderBook, event: MarketEvent, received_monotonic_ns: int) -> None:
         for level in event.bids:
             book.bids.set_level(level.price, level.size)
         for level in event.asks:
             book.asks.set_level(level.price, level.size)
         book.sequence = event.sequence
         book.last_timestamp_ns = event.timestamp_ns
+        book.last_received_monotonic_ns = received_monotonic_ns

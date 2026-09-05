@@ -84,6 +84,19 @@ class BookUpdateResult:
 
 
 @dataclass(frozen=True)
+class BookEligibility:
+    exchange: str
+    pair: str
+    initialized: bool
+    continuous: bool
+    connected: bool
+    age_ns: int | None
+    max_age_ns: int
+    eligible: bool
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
 class LiveMessage:
     type: Literal["top_of_book", "opportunity"]
     payload: dict[str, str | int]
@@ -95,4 +108,9 @@ class BookStateSnapshot:
     pair: str
     sequence: int | None
     stale: bool
+    initialized: bool = False
+    continuous: bool = False
+    connected: bool = False
+    age_ns: int | None = None
+    eligible: bool = False
     top_of_book: TopOfBook | None = None
