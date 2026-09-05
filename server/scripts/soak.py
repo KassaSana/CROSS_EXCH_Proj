@@ -1,0 +1,320 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import ctypes
+import json
+import statistics
+import sys
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+
+def utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def percentile(values: list[int], fraction: float) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, int((len(ordered) - 1) * fraction))
+    return ordered[index]
+
+
+def process_rss_bytes(pid: int) -> int | None:
+    if sys.platform == "win32":
+        class ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_ulong),
+                ("PageFaultCount", ctypes.c_ulong),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        query_information = 0x0400
+        process = ctypes.windll.kernel32.OpenProcess(query_information, False, pid)
+        if not process:
+            return None
+        try:
+            counters = ProcessMemoryCounters()
+            counters.cb = ctypes.sizeof(counters)
+            success = ctypes.windll.psapi.GetProcessMemoryInfo(
+                process, ctypes.byref(counters), counters.cb
+            )
+            return int(counters.WorkingSetSize) if success else None
+        finally:
+            ctypes.windll.kernel32.CloseHandle(process)
+
+    status_path = Path(f"/proc/{pid}/status")
+    if status_path.exists():
+        for line in status_path.read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
+    return None
+
+
+@dataclass
+class AdapterObservation:
+    first_reconnects: int | None = None
+    last_reconnects: int = 0
+    first_gaps: int | None = None
+    last_gaps: int = 0
+    max_message_age_ms: int | None = None
+    last_error: str | None = None
+
+    def observe(self, payload: dict[str, Any]) -> None:
+        reconnects = int(payload["reconnect_count"])
+        gaps = int(payload["gap_count"])
+        if self.first_reconnects is None:
+            self.first_reconnects = reconnects
+        if self.first_gaps is None:
+            self.first_gaps = gaps
+        self.last_reconnects = reconnects
+        self.last_gaps = gaps
+        age = payload.get("last_message_age_ms")
+        if age is not None:
+            self.max_message_age_ms = max(self.max_message_age_ms or 0, int(age))
+        self.last_error = payload.get("last_error")
+
+
+@dataclass
+class BookObservation:
+    eligible_samples: int = 0
+    ineligible_reasons: Counter[str] = field(default_factory=Counter)
+    ages_ms: list[int] = field(default_factory=list)
+    last_eligible: bool | None = None
+    ineligible_since: float | None = None
+    recovery_seconds: list[float] = field(default_factory=list)
+
+    def observe(self, payload: dict[str, Any], elapsed_seconds: float) -> None:
+        eligible = bool(payload["eligible"])
+        if eligible:
+            self.eligible_samples += 1
+        else:
+            self.ineligible_reasons[str(payload.get("reason") or "unknown")] += 1
+        age = payload.get("age_ms")
+        if age is not None:
+            self.ages_ms.append(int(age))
+
+        if self.last_eligible is True and not eligible:
+            self.ineligible_since = elapsed_seconds
+        elif self.last_eligible is False and eligible and self.ineligible_since is not None:
+            self.recovery_seconds.append(elapsed_seconds - self.ineligible_since)
+            self.ineligible_since = None
+        self.last_eligible = eligible
+
+
+@dataclass
+class SoakReport:
+    started_at: str
+    duration_requested_seconds: float
+    sample_interval_seconds: float
+    samples: int = 0
+    ready_samples: int = 0
+    http_failures: list[str] = field(default_factory=list)
+    adapters: dict[str, AdapterObservation] = field(default_factory=dict)
+    books: dict[str, BookObservation] = field(default_factory=dict)
+    rss_bytes: list[int] = field(default_factory=list)
+    opportunity_start: int | None = None
+    opportunity_end: int | None = None
+    background_failures: dict[str, str] = field(default_factory=dict)
+    ended_at: str | None = None
+    actual_duration_seconds: float = 0
+
+    def observe(
+        self,
+        *,
+        adapters: list[dict[str, Any]],
+        books: list[dict[str, Any]],
+        readiness: dict[str, Any],
+        overview: dict[str, Any],
+        elapsed_seconds: float,
+        rss: int | None,
+    ) -> None:
+        self.samples += 1
+        if readiness.get("status") == "ready":
+            self.ready_samples += 1
+        for failure in readiness.get("background_task_failures", []):
+            self.background_failures[str(failure["task"])] = str(failure["error"])
+        count = int(overview["all_time_count"])
+        if self.opportunity_start is None:
+            self.opportunity_start = count
+        self.opportunity_end = count
+        if rss is not None:
+            self.rss_bytes.append(rss)
+
+        for payload in adapters:
+            exchange = str(payload["exchange"])
+            self.adapters.setdefault(exchange, AdapterObservation()).observe(payload)
+        for payload in books:
+            key = f"{payload['exchange']}:{payload['pair']}"
+            self.books.setdefault(key, BookObservation()).observe(payload, elapsed_seconds)
+
+    def markdown(self) -> str:
+        opportunity_delta = (self.opportunity_end or 0) - (self.opportunity_start or 0)
+        ready_pct = 0 if self.samples == 0 else self.ready_samples / self.samples * 100
+        lines = [
+            f"# Live soak report - {self.started_at[:10]}",
+            "",
+            f"- Started: `{self.started_at}`",
+            f"- Ended: `{self.ended_at}`",
+            f"- Requested duration: `{self.duration_requested_seconds:.1f}s`",
+            f"- Actual duration: `{self.actual_duration_seconds:.1f}s`",
+            f"- Sample interval: `{self.sample_interval_seconds:.1f}s`",
+            f"- Successful samples: `{self.samples}`",
+            f"- Ready samples: `{self.ready_samples}/{self.samples}` ({ready_pct:.1f}%)",
+            f"- HTTP failures: `{len(self.http_failures)}`",
+            f"- Opportunities observed: `{opportunity_delta}`",
+            f"- Background task failures: `{len(self.background_failures)}`",
+            "",
+            "## Adapters",
+            "",
+            "| Exchange | Reconnects during run | Gaps during run | Max message age | Last error |",
+            "| --- | ---: | ---: | ---: | --- |",
+        ]
+        for exchange, observation in sorted(self.adapters.items()):
+            reconnect_delta = observation.last_reconnects - (observation.first_reconnects or 0)
+            gap_delta = observation.last_gaps - (observation.first_gaps or 0)
+            age = "-" if observation.max_message_age_ms is None else f"{observation.max_message_age_ms} ms"
+            lines.append(
+                f"| {exchange} | {reconnect_delta} | {gap_delta} | {age} | "
+                f"{observation.last_error or '-'} |"
+            )
+
+        lines.extend(
+            [
+                "",
+                "## Book eligibility",
+                "",
+                "| Book | Eligible samples | Ineligible reasons | p95 age | Max age | Recoveries |",
+                "| --- | ---: | --- | ---: | ---: | --- |",
+            ]
+        )
+        for key, observation in sorted(self.books.items()):
+            reasons = ", ".join(
+                f"{reason}={count}"
+                for reason, count in sorted(observation.ineligible_reasons.items())
+            ) or "-"
+            p95_age = percentile(observation.ages_ms, 0.95)
+            max_age = max(observation.ages_ms) if observation.ages_ms else None
+            recoveries = ", ".join(f"{value:.1f}s" for value in observation.recovery_seconds) or "-"
+            lines.append(
+                f"| {key} | {observation.eligible_samples}/{self.samples} | {reasons} | "
+                f"{'-' if p95_age is None else f'{p95_age} ms'} | "
+                f"{'-' if max_age is None else f'{max_age} ms'} | {recoveries} |"
+            )
+
+        lines.extend(["", "## Process memory", ""])
+        if self.rss_bytes:
+            mib = [value / 1024 / 1024 for value in self.rss_bytes]
+            lines.extend(
+                [
+                    f"- Samples: `{len(mib)}`",
+                    f"- Minimum RSS: `{min(mib):.2f} MiB`",
+                    f"- Maximum RSS: `{max(mib):.2f} MiB`",
+                    f"- Mean RSS: `{statistics.fmean(mib):.2f} MiB`",
+                    f"- Start-to-end change: `{mib[-1] - mib[0]:+.2f} MiB`",
+                ]
+            )
+        else:
+            lines.append("- RSS unavailable (pass `--pid` for the backend process).")
+
+        if self.background_failures:
+            lines.extend(["", "## Background failures", ""])
+            lines.extend(
+                f"- `{task}`: `{error}`" for task, error in sorted(self.background_failures.items())
+            )
+        if self.http_failures:
+            lines.extend(["", "## Sampling failures", ""])
+            lines.extend(f"- {failure}" for failure in self.http_failures)
+        lines.append("")
+        return "\n".join(lines)
+
+
+async def fetch_json(client: httpx.AsyncClient, path: str) -> dict[str, Any] | list[dict[str, Any]]:
+    response = await client.get(path)
+    if path != "/readyz":
+        response.raise_for_status()
+    return response.json()  # type: ignore[no-any-return]
+
+
+async def run_soak(
+    base_url: str,
+    duration_seconds: float,
+    sample_interval_seconds: float,
+    pid: int | None,
+) -> SoakReport:
+    report = SoakReport(utc_now(), duration_seconds, sample_interval_seconds)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    async with httpx.AsyncClient(base_url=base_url, timeout=10) as client:
+        while True:
+            elapsed = loop.time() - started
+            try:
+                adapters, books, readiness, overview = await asyncio.gather(
+                    fetch_json(client, "/api/adapters"),
+                    fetch_json(client, "/api/book-status"),
+                    fetch_json(client, "/readyz"),
+                    fetch_json(client, "/api/system/overview"),
+                )
+                assert isinstance(adapters, list)
+                assert isinstance(books, list)
+                assert isinstance(readiness, dict)
+                assert isinstance(overview, dict)
+                report.observe(
+                    adapters=adapters,
+                    books=books,
+                    readiness=readiness,
+                    overview=overview,
+                    elapsed_seconds=elapsed,
+                    rss=None if pid is None else process_rss_bytes(pid),
+                )
+            except (httpx.HTTPError, KeyError, TypeError, ValueError, AssertionError) as exc:
+                report.http_failures.append(f"{utc_now()}: {type(exc).__name__}: {exc}")
+
+            remaining = duration_seconds - (loop.time() - started)
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(sample_interval_seconds, remaining))
+
+    report.actual_duration_seconds = loop.time() - started
+    report.ended_at = utc_now()
+    return report
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Observe a running ArbSync backend soak test.")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--duration-seconds", type=float, default=86_400)
+    parser.add_argument("--sample-seconds", type=float, default=300)
+    parser.add_argument("--pid", type=int)
+    parser.add_argument("--output", type=Path, required=True)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.duration_seconds <= 0 or args.sample_seconds <= 0:
+        raise SystemExit("duration and sample interval must be positive")
+    report = asyncio.run(
+        run_soak(args.base_url, args.duration_seconds, args.sample_seconds, args.pid)
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(report.markdown())
+    print(json.dumps({"output": str(args.output), "samples": report.samples}))
+
+
+if __name__ == "__main__":
+    main()

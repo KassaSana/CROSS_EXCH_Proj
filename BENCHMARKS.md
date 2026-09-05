@@ -53,3 +53,20 @@ Notes:
 - the detector microbenchmark is not a valid claim for full pipeline throughput
 
 Raw persisted results live in [benchmarks/results.json](benchmarks/results.json).
+
+## 3. Live Soak Observer
+
+Start the backend, note its process ID, then run:
+
+```bash
+python3 server/scripts/soak.py \
+  --duration-seconds 86400 \
+  --sample-seconds 300 \
+  --pid <backend-pid> \
+  --output benchmarks/soak_YYYY-MM-DD.md
+```
+
+The observer samples adapter reconnects and gaps, canonical book eligibility and
+age, readiness, opportunities, background-task failures, HTTP failures, recovery
+durations, and backend RSS. Shorter durations are useful as smoke tests but must
+not be described as the required 24-hour soak.
