@@ -134,6 +134,7 @@ def create_app(
     adapters: Iterable[ExchangeAdapter] = (),
     expected_pairs: Iterable[tuple[str, str]] = (),
     started_at_holder: list[int] | None = None,
+    background_failures: Callable[[], list[dict[str, str]]] = lambda: [],
 ) -> FastAPI:
     app = FastAPI(title="Cross-Exchange Arbitrage Detector")
     app.add_middleware(
@@ -205,16 +206,18 @@ def create_app(
     @app.get("/readyz")
     async def readyz() -> JSONResponse:
         disconnected = [adapter.name for adapter in adapter_list if not adapter.connected]
+        task_failures = background_failures()
         stale_pairs: list[dict[str, object]] = []
         for status in book_manager.eligibility_for(tracked_pairs):
             if not status.eligible:
                 stale_pairs.append(status.as_payload())
 
-        ready = not disconnected and not stale_pairs
+        ready = not disconnected and not stale_pairs and not task_failures
         payload: dict[str, object] = {
             "status": "ready" if ready else "not_ready",
             "disconnected_adapters": disconnected,
             "stale_pairs": stale_pairs,
+            "background_task_failures": task_failures,
         }
         return JSONResponse(payload, status_code=200 if ready else 503)
 

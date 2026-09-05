@@ -19,6 +19,11 @@ persistence_queue_drops_total = Counter(
     "arb_persistence_queue_drops_total",
     "Dropped persistence events when the queue is full",
 )
+background_task_failures_total = Counter(
+    "arb_background_task_failures_total",
+    "Unexpected background task exits",
+    ["task"],
+)
 
 
 def render_metrics() -> tuple[bytes, str]:

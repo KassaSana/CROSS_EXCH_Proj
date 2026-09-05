@@ -255,3 +255,47 @@ async def test_processing_delay_can_make_received_event_ineligible(monkeypatch) 
     message = broadcaster.broadcast.await_args.args[0]
     assert message.type == "book_status"
     assert message.payload["reason"] == "too_old"
+
+
+@pytest.mark.asyncio
+async def test_background_task_supervisor_records_unexpected_failure(monkeypatch) -> None:
+    logged = Mock()
+    metric = Mock()
+    monkeypatch.setattr(main, "logger", Mock(error=logged))
+    monkeypatch.setattr(main, "background_task_failures_total", metric)
+    supervisor = main.BackgroundTaskSupervisor()
+
+    async def fail() -> object:
+        raise RuntimeError("boom")
+
+    task = supervisor.create("adapter:gemini", fail())
+    await asyncio.gather(task, return_exceptions=True)
+    await asyncio.sleep(0)
+
+    assert supervisor.failures() == [
+        {"task": "adapter:gemini", "error": "RuntimeError('boom')"}
+    ]
+    metric.labels.assert_called_once_with(task="adapter:gemini")
+    metric.labels.return_value.inc.assert_called_once_with()
+    logged.assert_called_once_with(
+        "background_task_failed",
+        task="adapter:gemini",
+        error="RuntimeError('boom')",
+    )
+
+
+@pytest.mark.asyncio
+async def test_background_task_supervisor_ignores_shutdown_cancellation() -> None:
+    supervisor = main.BackgroundTaskSupervisor()
+
+    async def wait_forever() -> object:
+        await asyncio.Event().wait()
+        return None
+
+    task = supervisor.create("persistence", wait_forever())
+    supervisor.stop()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    await asyncio.sleep(0)
+
+    assert supervisor.failures() == []

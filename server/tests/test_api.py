@@ -168,7 +168,28 @@ def test_readyz_returns_ready_for_fresh_books() -> None:
         "status": "ready",
         "disconnected_adapters": [],
         "stale_pairs": [],
+        "background_task_failures": [],
     }
+
+
+def test_readyz_reports_background_task_failures() -> None:
+    client = TestClient(
+        create_app(
+            OpportunityStore(":memory:"),
+            OrderBookManager(),
+            LiveBroadcaster(),
+            background_failures=lambda: [
+                {"task": "adapter:gemini", "error": "RuntimeError('boom')"}
+            ],
+        )
+    )
+
+    response = client.get("/readyz")
+
+    assert response.status_code == 503
+    assert response.json()["background_task_failures"] == [
+        {"task": "adapter:gemini", "error": "RuntimeError('boom')"}
+    ]
 
 
 def test_book_status_uses_canonical_eligibility_payload() -> None:
