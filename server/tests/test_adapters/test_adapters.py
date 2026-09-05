@@ -23,6 +23,17 @@ def test_coinbase_snapshot_parsing() -> None:
     assert events[0].pair == "BTC-USD"
 
 
+def test_coinbase_nested_envelope_preserves_outer_sequence_per_product() -> None:
+    adapter = CoinbaseAdapter(["BTC-USD", "ETH-USD"])
+    payload = (
+        '{"channel":"l2_data","sequence_num":42,"events":['
+        '{"type":"snapshot","product_id":"BTC-USD","updates":[]},'
+        '{"type":"snapshot","product_id":"ETH-USD","updates":[]}]}'
+    )
+    events = asyncio.run(adapter.parse_message(payload))
+    assert [(event.pair, event.sequence) for event in events] == [("BTC-USD", 42), ("ETH-USD", 42)]
+
+
 def test_binance_depth_update_parsing() -> None:
     adapter = BinanceAdapter(["BTCUSDT"])
     asyncio.run(adapter.parse_message('{"symbol":"BTCUSDT","lastUpdateId":14,"bids":[["99","1"]],"asks":[["101","2"]]}'))
@@ -73,16 +84,30 @@ def _stub_snapshot(adapter: object, sequence: int = 0) -> None:
     adapter.fetch_snapshot = types.MethodType(fetch_snapshot, adapter)
 
 
-def test_coinbase_gap_triggers_snapshot_resync() -> None:
+def test_coinbase_gap_waits_for_stream_snapshot_without_using_rest_sequence() -> None:
     adapter = CoinbaseAdapter(["BTC-USD"])
-    _stub_snapshot(adapter)
     # First message establishes a sequence baseline.
     asyncio.run(adapter.parse_message('{"type":"snapshot","product_id":"BTC-USD","sequence_num":1,"updates":[{"side":"bid","price_level":"100","new_quantity":"1"}]}'))
-    # Skipping sequence 2 should trigger a gap-driven snapshot at sequence 3.
+    # Skipping sequence 2 invalidates the stream; REST sequence numbers must not
+    # be used to pretend the Advanced Trade stream is synchronized again.
     events = asyncio.run(adapter.parse_message('{"type":"update","product_id":"BTC-USD","sequence_num":3,"updates":[{"side":"bid","price_level":"99","new_quantity":"1"}]}'))
+    assert events == []
+    assert adapter.gap_count == 1
+    assert adapter._reconnect_requested is True
+    asyncio.run(adapter.reset_state())
+    assert adapter._reconnect_requested is False
+    events = asyncio.run(adapter.parse_message('{"type":"snapshot","product_id":"BTC-USD","sequence_num":10,"updates":[]}'))
     assert len(events) == 1
     assert events[0].kind is EventKind.SNAPSHOT
-    assert adapter.gap_count == 1
+
+
+def test_coinbase_update_before_stream_snapshot_is_ignored() -> None:
+    adapter = CoinbaseAdapter(["BTC-USD"])
+    events = asyncio.run(adapter.parse_message('{"type":"update","product_id":"BTC-USD","sequence_num":1,"updates":[]}'))
+    assert events == []
+    assert adapter.gap_count == 0
+    snapshot = asyncio.run(adapter.parse_message('{"type":"snapshot","product_id":"BTC-USD","sequence_num":2,"updates":[]}'))
+    assert snapshot[0].kind is EventKind.SNAPSHOT
 
 
 def test_gemini_first_v2_message_triggers_rest_snapshot() -> None:
