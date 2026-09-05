@@ -25,7 +25,7 @@ rule.
 | Proof: fixture-driven failure cases | MOSTLY DONE | `server/tests/` |
 | Proof: live soak | NOT STARTED | - |
 
-Baseline: 127 tests passing as of 2026-09-05.
+Baseline: 135 tests passing as of 2026-09-05.
 
 ## 1. Correct sequence handling inside each adapter
 

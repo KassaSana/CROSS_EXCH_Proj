@@ -44,8 +44,10 @@ or commit that proves it, and its "Next up" section says where to resume.
 dashboard WebSocket hook**, and update its status table in the same commit as the
 code change so the tracker never drifts from the tree.
 
-Currently done: Binance snapshot-and-buffer, Coinbase envelope sequencing,
-explicit book eligibility. Next: the Gemini feed migration.
+Currently done: exchange-specific continuity for Binance, Coinbase, and Gemini;
+explicit book eligibility; dashboard reconnect/state restore; bounded client
+queues; and background-task supervision. Next: live soak validation and age
+threshold tuning.
 
 ## Run locally
 
@@ -102,7 +104,7 @@ Render's free tier sleeps after 15 min of inactivity — when sleeping, the back
 
 ## Architectural conventions
 
-- **Adapters**: each exchange has a class extending `ExchangeAdapter` (server/arb/adapters/base.py). The base class handles reconnect-with-backoff in `connect()`. Subclasses override `subscribe`, `parse_message`, `fetch_snapshot`, and optionally `reset_state` (called before each subscribe, used by Binance/Gemini to clear `_initialized`/`_pair_seq` so the next message after reconnect re-fetches a fresh REST snapshot).
+- **Adapters**: each exchange has a class extending `ExchangeAdapter` (server/arb/adapters/base.py). The base class handles reconnect-with-backoff in `connect()`. Subclasses override `subscribe`, `parse_message`, `fetch_snapshot`, and optionally `reset_state`. Binance rebuilds from a REST snapshot aligned with buffered deltas; Coinbase waits for a new Level 2 stream snapshot; Gemini reconnects with `snapshot=-1` and treats the first differential-depth frame per pair as its replacement snapshot.
 - **Persistence is batched**: opportunities are enqueued; a background task flushes by size (500) or interval (1s). Don't block the detection path with sync writes.
 - **Books are in-memory only**: `OrderBookManager` holds L2 books. SQLite stores opportunities, not books.
 - **Tests use file-based SQLite via `tmp_path`**: `:memory:` SQLite gives a fresh DB per `aiosqlite.connect()`, so tests that hit the table need `tmp_path / "x.sqlite3"`.
