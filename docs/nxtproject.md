@@ -22,7 +22,7 @@ rule.
 | 3b. Backend state restore on connect | DONE | `server/arb/api.py` |
 | 4a. Bounded per-client queues | DONE | `server/arb/api.py` |
 | 4b. Background task visibility | DONE | `server/arb/main.py` |
-| Freshness threshold tuning | DONE | `config.toml`, `benchmarks/soak_smoke_5m_2026-09-05.md` |
+| Freshness threshold tuning | DONE | `config.toml`, `benchmarks/soak_smoke_5m_2026-09-05.md`, `benchmarks/soak_validation_60s_window.md` |
 | Proof: fixture-driven failure cases | MOSTLY DONE | `server/tests/` |
 | Proof: live smoke | DONE | `benchmarks/soak_smoke_5m_2026-09-05.md` |
 | Proof: live soak | NOT STARTED | - |
@@ -131,7 +131,9 @@ observed Binance DOT remain continuous and connected but receive no pair update
 for 38.5 seconds. The old cutoff excluded it for two samples before it recovered
 without a reconnect or gap. The new value preserves a clear recency bound while
 avoiding the observed false exclusion; the 24-hour soak must validate it across
-longer quiet periods.
+longer quiet periods. A post-change 90-second validation then kept all 27 books
+eligible for 19/19 samples with no sampling, adapter, or background-task
+failures.
 
 ## 3. Reconnect the dashboard and restore its state
 
