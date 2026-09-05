@@ -100,6 +100,21 @@ class ExchangeAdapter(abc.ABC):
     def request_reconnect(self) -> None:
         self._reconnect_requested = True
 
+    async def stream_events(self, websocket: Any) -> AsyncIterator[MarketEvent]:
+        """Normalize one connection's messages, preserving their receipt time."""
+        async for message in websocket:
+            received_monotonic_ns = time.monotonic_ns()
+            self.last_message_ns = time.time_ns()
+            text_message = message.decode() if isinstance(message, bytes) else message
+            for event in await self.parse_message(text_message):
+                yield (
+                    event
+                    if event.received_monotonic_ns is not None
+                    else replace(event, received_monotonic_ns=received_monotonic_ns)
+                )
+            if self._reconnect_requested:
+                raise RuntimeError("adapter requested reconnect")
+
     async def connect(self) -> AsyncIterator[MarketEvent]:
         import websockets
 
@@ -113,18 +128,8 @@ class ExchangeAdapter(abc.ABC):
                     await self.reset_state()
                     await self.subscribe(websocket)
                     backoff = 1.0
-                    async for message in websocket:
-                        received_monotonic_ns = time.monotonic_ns()
-                        self.last_message_ns = time.time_ns()
-                        text_message = message.decode() if isinstance(message, bytes) else message
-                        for event in await self.parse_message(text_message):
-                            yield (
-                                event
-                                if event.received_monotonic_ns is not None
-                                else replace(event, received_monotonic_ns=received_monotonic_ns)
-                            )
-                        if self._reconnect_requested:
-                            raise RuntimeError("adapter requested reconnect")
+                    async for event in self.stream_events(websocket):
+                        yield event
             except Exception as exc:  # pragma: no cover - reconnect path
                 self.connected = False
                 await self._report_connection_state(False)

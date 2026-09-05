@@ -4,21 +4,20 @@ This project uses adapter-driven resync on sequence gaps.
 
 Chosen strategy:
 - Drop the local sequence chain for the affected `(exchange, pair)` stream
-- Fetch a fresh REST snapshot for that exchange/pair
-- Emit a synthetic `snapshot` `MarketEvent`
-- Resume processing future deltas from the snapshot sequence
+- Reinitialize from the exchange-defined snapshot source
+- Validate buffered updates against that snapshot before emitting normalized events
+- Resume processing only after exchange continuity is established
 
 Why this approach:
-- It is simpler and more reliable for a portfolio-scale single-process system than buffering out-of-order deltas during resync.
 - It keeps the recovery logic close to the exchange adapter, which is where exchange-specific sequence semantics already live.
 - It gives the `OrderBookManager` a clean snapshot boundary instead of forcing it to recover from partially trusted delta streams.
 
 Tradeoffs:
 - A REST snapshot introduces extra latency during the resync window.
-- If the exchange snapshot endpoint doesn't provide an exact sequence number, the adapter falls back to the triggering live sequence so the stream can continue.
-- This is less exact than exchange-specific buffered reconciliation, but it is operationally simpler and aligned with the project scope.
+- Books stay ineligible throughout reconnect and reconstruction.
+- Exchange update identifiers validate protocol continuity; normalized local sequences remain consecutive for `OrderBookManager`.
 
 Per exchange:
-- `Gemini`: on gap, fetches `GET /v1/book/{symbol}` and emits a snapshot using the returned sequence if available, otherwise the triggering sequence.
-- `Coinbase`: on gap, fetches `GET /products/{id}/book?level=2` and emits a snapshot using the returned sequence if present, otherwise the triggering sequence.
-- `Binance`: on gap, fetches `GET /api/v3/depth?symbol=...&limit=1000` and emits a snapshot keyed to `lastUpdateId`.
+- `Gemini`: currently fetches `GET /v1/book/{symbol}`; migration to the current depth feed remains planned.
+- `Coinbase`: waits for a fresh Level 2 stream snapshot and never mixes REST Exchange sequence numbers with Advanced Trade WebSocket sequence numbers.
+- `Binance.US`: reads and bounds WebSocket updates while fetching `GET /api/v3/depth?symbol=...&limit=5000`. It discards updates covered by `lastUpdateId`, requires the first retained range to contain the snapshot ID, then checks every later `U/u` range. Overflow, snapshot failure, misalignment, `serverShutdown`, or a sequence gap aborts synchronization and reconnects.
