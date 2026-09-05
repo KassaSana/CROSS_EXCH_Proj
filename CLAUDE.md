@@ -27,9 +27,25 @@ dashboard/src/
   components/            # presentational components
   hooks/                 # useWebSocket
   api/client.ts          # all fetch + types
+docs/nxtproject.md       # order book trust & recovery plan + live status tracker
 config.toml              # exchange pairs, detector threshold, server config
 arb.sqlite3              # local dev DB (gitignored)
 ```
+
+## Work in progress
+
+`docs/nxtproject.md` is the state of record for the order book trust and
+recovery work — the rule that a book is eligible for detection only when we know
+how it was initialized, that its updates are continuous, and that its data is
+recent enough. It tags every item DONE / IN PROGRESS / NOT STARTED with the file
+or commit that proves it, and its "Next up" section says where to resume.
+
+**Read it before touching the adapters, `orderbook.py`, the broadcaster, or the
+dashboard WebSocket hook**, and update its status table in the same commit as the
+code change so the tracker never drifts from the tree.
+
+Currently done: Binance snapshot-and-buffer, Coinbase envelope sequencing,
+explicit book eligibility. Next: the Gemini feed migration.
 
 ## Run locally
 
