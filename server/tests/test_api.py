@@ -120,7 +120,19 @@ def test_readyz_returns_not_ready_for_missing_updates() -> None:
     body = response.json()
     assert body["status"] == "not_ready"
     assert body["disconnected_adapters"] == []
-    assert body["stale_pairs"] == [{"exchange": "stub", "pair": "BTC-USD"}]
+    assert body["stale_pairs"] == [
+        {
+            "exchange": "stub",
+            "pair": "BTC-USD",
+            "initialized": False,
+            "continuous": False,
+            "connected": True,
+            "age_ms": None,
+            "max_age_ms": 30_000,
+            "eligible": False,
+            "reason": "missing",
+        }
+    ]
 
 
 def test_readyz_returns_ready_for_fresh_books() -> None:
@@ -157,6 +169,44 @@ def test_readyz_returns_ready_for_fresh_books() -> None:
         "disconnected_adapters": [],
         "stale_pairs": [],
     }
+
+
+def test_book_status_uses_canonical_eligibility_payload() -> None:
+    manager = OrderBookManager(max_age_seconds=12.5, clock=lambda: 1_000)
+    manager.apply(
+        MarketEvent(
+            exchange="stub",
+            pair="BTC-USD",
+            kind=EventKind.SNAPSHOT,
+            sequence=1,
+            timestamp_ns=1,
+            bids=(PriceLevel(price=Decimal("100"), size=Decimal("1")),),
+            asks=(PriceLevel(price=Decimal("101"), size=Decimal("1")),),
+        ),
+        received_monotonic_ns=1_000,
+    )
+    client = TestClient(
+        create_app(
+            OpportunityStore(":memory:"),
+            manager,
+            LiveBroadcaster(),
+            expected_pairs=[("stub", "BTC-USD")],
+        )
+    )
+
+    assert client.get("/api/book-status").json() == [
+        {
+            "exchange": "stub",
+            "pair": "BTC-USD",
+            "initialized": True,
+            "continuous": True,
+            "connected": True,
+            "age_ms": 0,
+            "max_age_ms": 12_500,
+            "eligible": True,
+            "reason": None,
+        }
+    ]
 
 
 def test_window_to_ns_known_and_unknown_values() -> None:

@@ -25,11 +25,17 @@ class PersistenceConfig:
 
 
 @dataclass(frozen=True)
+class OrderBookConfig:
+    max_age_seconds: float
+
+
+@dataclass(frozen=True)
 class AppConfig:
     detector: DetectorConfig
     exchanges: dict[str, list[str]]
     server: ServerConfig
     persistence: PersistenceConfig
+    order_books: OrderBookConfig
 
 
 def load_config(path: str | Path = "config.toml") -> AppConfig:
@@ -46,5 +52,8 @@ def load_config(path: str | Path = "config.toml") -> AppConfig:
             batch_size=int(raw["persistence"]["batch_size"]),
             flush_interval_seconds=float(raw["persistence"]["flush_interval_seconds"]),
             queue_maxsize=int(raw["persistence"].get("queue_maxsize", 10_000)),
+        ),
+        order_books=OrderBookConfig(
+            max_age_seconds=float(raw.get("order_books", {}).get("max_age_seconds", 30.0)),
         ),
     )

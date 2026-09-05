@@ -34,6 +34,7 @@ class MarketEvent:
     raw_timestamp_ms: int | None = None
     exchange_first_sequence: int | None = None
     exchange_last_sequence: int | None = None
+    received_monotonic_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,7 @@ class TopOfBook:
     sequence: int
     timestamp_ns: int
 
-    def as_payload(self) -> dict[str, str | int]:
+    def as_payload(self) -> dict[str, object]:
         return {
             "exchange": self.exchange,
             "pair": self.pair,
@@ -72,7 +73,7 @@ class ArbitrageOpportunity:
     max_size: Decimal
     theoretical_profit_usd: Decimal
 
-    def as_payload(self) -> dict[str, str | int]:
+    def as_payload(self) -> dict[str, object]:
         payload = asdict(self)
         return {key: str(value) if isinstance(value, Decimal) else value for key, value in payload.items()}
 
@@ -97,11 +98,24 @@ class BookEligibility:
     eligible: bool
     reason: str | None = None
 
+    def as_payload(self) -> dict[str, object]:
+        return {
+            "exchange": self.exchange,
+            "pair": self.pair,
+            "initialized": self.initialized,
+            "continuous": self.continuous,
+            "connected": self.connected,
+            "age_ms": None if self.age_ns is None else self.age_ns // 1_000_000,
+            "max_age_ms": self.max_age_ns // 1_000_000,
+            "eligible": self.eligible,
+            "reason": self.reason,
+        }
+
 
 @dataclass(frozen=True)
 class LiveMessage:
-    type: Literal["top_of_book", "opportunity"]
-    payload: dict[str, str | int]
+    type: Literal["top_of_book", "opportunity", "book_status"]
+    payload: dict[str, object]
 
 
 @dataclass

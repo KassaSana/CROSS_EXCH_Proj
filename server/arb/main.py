@@ -17,6 +17,7 @@ from arb.api import LiveBroadcaster, create_app
 from arb.config import load_config
 from arb.detector import ArbitrageDetector
 from arb.metrics import (
+    book_eligible,
     book_staleness_seconds,
     book_updates_total,
     detection_latency_seconds,
@@ -57,17 +58,38 @@ async def process_market_event(
     broadcaster: LiveBroadcaster,
 ) -> None:
     """Apply one event, publish its book, then detect and deliver opportunities."""
-    received_monotonic_ns = time.monotonic_ns()
+    received_monotonic_ns = (
+        event.received_monotonic_ns
+        if event.received_monotonic_ns is not None
+        else time.monotonic_ns()
+    )
     events_ingested_total.labels(exchange=event.exchange).inc()
     result = book_manager.apply(event, received_monotonic_ns=received_monotonic_ns)
+    eligibility_checked_ns = time.monotonic_ns()
+    status = book_manager.eligibility(event.exchange, event.pair, eligibility_checked_ns)
     if not result.accepted or result.top_of_book is None:
+        book_eligible.labels(exchange=event.exchange, pair=event.pair).set(0)
+        await broadcaster.broadcast(LiveMessage(type="book_status", payload=status.as_payload()))
         return
 
     book_updates_total.labels(exchange=event.exchange, pair=event.pair).inc()
-    book_staleness_seconds.labels(exchange=event.exchange, pair=event.pair).set(0)
+    if status.age_ns is not None:
+        book_staleness_seconds.labels(exchange=event.exchange, pair=event.pair).set(
+            status.age_ns / 1_000_000_000
+        )
+    book_eligible.labels(exchange=event.exchange, pair=event.pair).set(
+        1 if status.eligible else 0
+    )
+    if not status.eligible:
+        await broadcaster.broadcast(LiveMessage(type="book_status", payload=status.as_payload()))
+        return
+
     await broadcaster.broadcast(LiveMessage(type="top_of_book", payload=result.top_of_book.as_payload()))
+    await broadcaster.broadcast(
+        LiveMessage(type="book_status", payload=status.as_payload())
+    )
     pair_books = book_manager.eligible_books(
-        event.pair, ("gemini", "coinbase", "binance"), received_monotonic_ns
+        event.pair, ("gemini", "coinbase", "binance"), eligibility_checked_ns
     )
     detect_started = time.perf_counter()
     opportunities = detector.detect_for_pair(event.pair, pair_books, time.time_ns())
@@ -101,7 +123,7 @@ async def run_pipeline() -> None:
     configure_logging()
     config = load_config()
     started_at_holder: list[int] = [time.time_ns()]
-    book_manager = OrderBookManager()
+    book_manager = OrderBookManager(max_age_seconds=config.order_books.max_age_seconds)
     detector = ArbitrageDetector(threshold_pct=Decimal(str(config.detector.threshold_pct)))
     store = OpportunityStore(
         config.server.database_path,
@@ -114,9 +136,19 @@ async def run_pipeline() -> None:
         CoinbaseAdapter(config.exchanges.get("coinbase", [])),
         BinanceAdapter(config.exchanges.get("binance", [])),
     ]
-    for adapter in adapters:
-        adapter.set_connection_state_callback(book_manager.set_exchange_connected)
     broadcaster = LiveBroadcaster()
+    async def report_connection_state(exchange: str, connected: bool) -> None:
+        statuses = book_manager.set_exchange_connected(exchange, connected)
+        for status in statuses:
+            book_eligible.labels(exchange=status.exchange, pair=status.pair).set(
+                1 if status.eligible else 0
+            )
+            await broadcaster.broadcast(
+                LiveMessage(type="book_status", payload=status.as_payload())
+            )
+
+    for adapter in adapters:
+        adapter.set_connection_state_callback(report_connection_state)
     expected_pairs = [
         *(("gemini", normalize_gemini_symbol(symbol)) for symbol in config.exchanges.get("gemini", [])),
         *(("coinbase", normalize_coinbase_symbol(symbol)) for symbol in config.exchanges.get("coinbase", [])),

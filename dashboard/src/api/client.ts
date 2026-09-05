@@ -30,6 +30,18 @@ export type AdapterStatus = {
   last_error: string | null;
 };
 
+export type BookStatus = {
+  exchange: string;
+  pair: string;
+  initialized: boolean;
+  continuous: boolean;
+  connected: boolean;
+  age_ms: number | null;
+  max_age_ms: number;
+  eligible: boolean;
+  reason: string | null;
+};
+
 export type TopOfBook = {
   exchange: string;
   pair: string;
@@ -100,6 +112,11 @@ export async function fetchPairs(): Promise<PairRecord[]> {
 
 export async function fetchAdapterStatus(): Promise<AdapterStatus[]> {
   const response = await fetch(`${API_BASE}/api/adapters`);
+  return response.json();
+}
+
+export async function fetchBookStatus(): Promise<BookStatus[]> {
+  const response = await fetch(`${API_BASE}/api/book-status`);
   return response.json();
 }
 

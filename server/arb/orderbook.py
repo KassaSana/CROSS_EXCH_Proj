@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from bisect import bisect_left
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -84,14 +85,17 @@ class OrderBook:
 
 
 class OrderBookManager:
-    def __init__(self, max_age_seconds: float = 30.0, clock=time.monotonic_ns) -> None:
+    def __init__(
+        self, max_age_seconds: float = 30.0, clock: Callable[[], int] = time.monotonic_ns
+    ) -> None:
         self._books: dict[tuple[str, str], OrderBook] = {}
         self._max_age_ns = int(max_age_seconds * 1_000_000_000)
         self._clock = clock
         self._exchange_connected: dict[str, bool] = {}
 
-    def set_exchange_connected(self, exchange: str, connected: bool) -> None:
+    def set_exchange_connected(self, exchange: str, connected: bool) -> list[BookEligibility]:
         self._exchange_connected[exchange] = connected
+        affected: list[BookEligibility] = []
         for (book_exchange, _pair), book in self._books.items():
             if book_exchange != exchange:
                 continue
@@ -99,6 +103,13 @@ class OrderBookManager:
             if not connected:
                 book.clear()
                 book.connected = False
+            affected.append(self.eligibility(book_exchange, _pair))
+        return affected
+
+    def eligibility_for(self, pairs: list[tuple[str, str]]) -> list[BookEligibility]:
+        """Return the canonical current status for each requested book."""
+        now = self._clock()
+        return [self.eligibility(exchange, pair, now) for exchange, pair in pairs]
 
     def apply(self, event: MarketEvent, received_monotonic_ns: int | None = None) -> BookUpdateResult:
         key = (event.exchange, event.pair)
@@ -172,8 +183,17 @@ class OrderBookManager:
         book = self._books.get((exchange, pair))
         now = self._clock() if now_monotonic_ns is None else now_monotonic_ns
         if book is None:
+            connected = self._exchange_connected.get(exchange, True)
             return BookEligibility(
-                exchange, pair, False, False, False, None, self._max_age_ns, False, "missing"
+                exchange,
+                pair,
+                False,
+                False,
+                connected,
+                None,
+                self._max_age_ns,
+                False,
+                "missing" if connected else "disconnected",
             )
         age_ns = (
             None

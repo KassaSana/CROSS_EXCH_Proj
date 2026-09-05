@@ -7,6 +7,7 @@ book_updates_total = Counter("arb_book_updates_total", "Accepted order book upda
 opportunities_total = Counter("arb_opportunities_total", "Arbitrage opportunities emitted", ["pair"])
 detection_latency_seconds = Histogram("arb_detection_latency_seconds", "Detection latency in seconds")
 book_staleness_seconds = Gauge("arb_book_staleness_seconds", "Age of last accepted book update", ["exchange", "pair"])
+book_eligible = Gauge("arb_book_eligible", "Whether an order book is eligible for detection", ["exchange", "pair"])
 adapter_reconnects_total = Counter("arb_adapter_reconnects_total", "Adapter reconnect attempts", ["exchange", "reason"])
 ws_clients = Gauge("arb_ws_clients", "Connected WebSocket dashboard clients")
 reconcile_mismatches_total = Counter("arb_reconcile_mismatches_total", "Snapshot reconciliation mismatches", ["exchange", "pair"])
