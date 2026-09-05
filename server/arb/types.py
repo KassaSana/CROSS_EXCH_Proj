@@ -32,6 +32,8 @@ class MarketEvent:
     bids: tuple[PriceLevel, ...] = ()
     asks: tuple[PriceLevel, ...] = ()
     raw_timestamp_ms: int | None = None
+    exchange_first_sequence: int | None = None
+    exchange_last_sequence: int | None = None
 
 
 @dataclass(frozen=True)
