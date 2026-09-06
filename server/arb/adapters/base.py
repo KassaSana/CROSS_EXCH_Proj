@@ -25,7 +25,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environme
     structlog = _StructlogFallback()  # type: ignore[assignment]
 
 from arb.metrics import adapter_reconnects_total
-from arb.types import EventKind, MarketEvent
+from arb.types import MarketEvent
 
 logger = structlog.get_logger(__name__)
 
@@ -152,36 +152,6 @@ class ExchangeAdapter(abc.ABC):
             response = await client.get(url)
             response.raise_for_status()
             return response.json()  # type: ignore[no-any-return]
-
-    async def finalize_events(self, events: list[MarketEvent]) -> list[MarketEvent]:
-        finalized: list[MarketEvent] = []
-        for event in events:
-            if event.kind is not EventKind.DELTA:
-                self._last_sequence_by_pair[event.pair] = event.sequence
-                finalized.append(event)
-                continue
-
-            last_sequence = self._last_sequence_by_pair.get(event.pair)
-            if last_sequence is None:
-                self.gap_count += 1
-                snapshot = await self.fetch_snapshot(event.pair, event.sequence)
-                self._last_sequence_by_pair[event.pair] = snapshot.sequence
-                finalized.append(snapshot)
-                continue
-
-            if event.sequence <= last_sequence:
-                continue
-
-            if event.sequence != last_sequence + 1:
-                self.gap_count += 1
-                snapshot = await self.fetch_snapshot(event.pair, event.sequence)
-                self._last_sequence_by_pair[event.pair] = snapshot.sequence
-                finalized.append(snapshot)
-                continue
-
-            self._last_sequence_by_pair[event.pair] = event.sequence
-            finalized.append(event)
-        return finalized
 
     def status_snapshot(self, now_ns: int | None = None) -> AdapterStatusSnapshot:
         current_ns = time.time_ns() if now_ns is None else now_ns
