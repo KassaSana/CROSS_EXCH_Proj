@@ -6,8 +6,8 @@ type Props = {
   allTimePeakMinute: PeakMinute | null;
 };
 
-function formatMinute(ns: number): string {
-  return new Date(Math.floor(ns / 1_000_000)).toLocaleString();
+function formatMinute(ns: string): string {
+  return new Date(Number(BigInt(ns) / 1_000_000n)).toLocaleString();
 }
 
 export function PeakCard({ allTimeCount, allTimeMaxSpread, allTimePeakMinute }: Props) {

@@ -6,8 +6,8 @@ type Props = {
   window: WindowKey;
 };
 
-function formatTick(ns: number, window: WindowKey): string {
-  const d = new Date(Math.floor(ns / 1_000_000));
+function formatTick(ns: string, window: WindowKey): string {
+  const d = new Date(Number(BigInt(ns) / 1_000_000n));
   if (window === "1h" || window === "4h") {
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }

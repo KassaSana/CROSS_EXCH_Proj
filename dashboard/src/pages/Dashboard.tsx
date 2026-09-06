@@ -44,7 +44,11 @@ function mergeOpportunities(current: Opportunity[], fetched: Opportunity[]): Opp
     unique.set(opportunityKey(opportunity), opportunity);
   }
   return [...unique.values()]
-    .sort((left, right) => right.timestamp_ns - left.timestamp_ns)
+    .sort((left, right) => {
+      const leftTimestamp = BigInt(left.timestamp_ns);
+      const rightTimestamp = BigInt(right.timestamp_ns);
+      return leftTimestamp === rightTimestamp ? 0 : leftTimestamp > rightTimestamp ? -1 : 1;
+    })
     .slice(0, 50);
 }
 
@@ -59,9 +63,9 @@ export default function Dashboard() {
   useEffect(() => {
     fetchRecentOpportunities().then((fetched) => {
       setOpportunities((current) => mergeOpportunities(current, fetched));
-    });
-    fetchStats().then(setStats);
-    fetchPairs().then(setPairs);
+    }).catch(() => setOpportunities([]));
+    fetchStats().then(setStats).catch(() => setStats(null));
+    fetchPairs().then(setPairs).catch(() => setPairs([]));
     const pollAdapterStatus = () => {
       fetchAdapterStatus().then(setAdapters).catch(() => setAdapters([]));
       fetchBookStatus()

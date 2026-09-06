@@ -1,5 +1,5 @@
 export type Opportunity = {
-  timestamp_ns: number;
+  timestamp_ns: string;
   pair: string;
   buy_exchange: string;
   sell_exchange: string;
@@ -50,18 +50,18 @@ export type TopOfBook = {
   best_ask_price: string;
   best_ask_size: string;
   sequence: number;
-  timestamp_ns: number;
+  timestamp_ns: string;
 };
 
 export type WindowKey = "1h" | "4h" | "1d" | "1w";
 
 export type PeakMinute = {
-  minute_start_ns: number;
+  minute_start_ns: string;
   count: number;
 };
 
 export type SystemOverview = {
-  started_at_ns: number;
+  started_at_ns: string;
   uptime_seconds: number;
   all_time_count: number;
   all_time_max_spread_pct: string;
@@ -79,7 +79,7 @@ export type WindowStats = {
 };
 
 export type TimeseriesPoint = {
-  bucket_start_ns: number;
+  bucket_start_ns: string;
   count: number;
   max_spread_pct: string;
 };
@@ -90,57 +90,74 @@ export type Timeseries = {
   points: TimeseriesPoint[];
 };
 
-const API_BASE = import.meta.env.VITE_API_URL ?? "https://arb-detector-api.onrender.com";
-const WS_BASE = API_BASE.replace(/^http/, "ws");
+const HOSTED_API_URL = "https://arb-detector-api.onrender.com";
+const API_BASE = (
+  import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "" : HOSTED_API_URL)
+).replace(/\/+$/, "");
+const WS_BASE = (API_BASE || window.location.origin).replace(/^http/, "ws");
 
 export { WS_BASE };
 
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly path: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, init);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    const suffix = detail ? `: ${detail}` : "";
+    throw new ApiError(response.status, path, `Request failed (${response.status})${suffix}`);
+  }
+  return (await response.json()) as T;
+}
+
 export async function fetchRecentOpportunities(): Promise<Opportunity[]> {
-  const response = await fetch(`${API_BASE}/api/opportunities/recent?limit=50`);
-  return response.json();
+  return requestJson<Opportunity[]>("/api/opportunities/recent?limit=50");
 }
 
 export async function fetchStats(): Promise<Stats> {
-  const response = await fetch(`${API_BASE}/api/stats?window=1h`);
-  return response.json();
+  return requestJson<Stats>("/api/stats?window=1h");
 }
 
 export async function fetchPairs(): Promise<PairRecord[]> {
-  const response = await fetch(`${API_BASE}/api/pairs`);
-  return response.json();
+  return requestJson<PairRecord[]>("/api/pairs");
 }
 
 export async function fetchAdapterStatus(): Promise<AdapterStatus[]> {
-  const response = await fetch(`${API_BASE}/api/adapters`);
-  return response.json();
+  return requestJson<AdapterStatus[]>("/api/adapters");
 }
 
 export async function fetchBookStatus(): Promise<BookStatus[]> {
-  const response = await fetch(`${API_BASE}/api/book-status`);
-  return response.json();
+  return requestJson<BookStatus[]>("/api/book-status");
 }
 
 export async function fetchSystemOverview(): Promise<SystemOverview> {
-  const response = await fetch(`${API_BASE}/api/system/overview`);
-  return response.json();
+  return requestJson<SystemOverview>("/api/system/overview");
 }
 
 export async function fetchSystemStats(window: WindowKey): Promise<WindowStats> {
-  const response = await fetch(`${API_BASE}/api/system/stats?window=${window}`);
-  return response.json();
+  return requestJson<WindowStats>(`/api/system/stats?window=${window}`);
 }
 
 export async function fetchSystemTimeseries(
   window: WindowKey,
   bucketSeconds = 60,
 ): Promise<Timeseries> {
-  const response = await fetch(
-    `${API_BASE}/api/system/timeseries?window=${window}&bucket_seconds=${bucketSeconds}`,
+  return requestJson<Timeseries>(
+    `/api/system/timeseries?window=${window}&bucket_seconds=${bucketSeconds}`,
   );
-  return response.json();
 }
 
-export async function resetSystemTimer(): Promise<{ started_at_ns: number; uptime_seconds: number }> {
-  const response = await fetch(`${API_BASE}/api/system/reset`, { method: "POST" });
-  return response.json();
+export async function resetSystemTimer(): Promise<{ started_at_ns: string; uptime_seconds: number }> {
+  return requestJson<{ started_at_ns: string; uptime_seconds: number }>("/api/system/reset", {
+    method: "POST",
+  });
 }

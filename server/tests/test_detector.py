@@ -129,7 +129,7 @@ def test_opportunity_payload_serializes_decimals_as_strings() -> None:
     )
     payload = opp.as_payload()
     assert payload["pair"] == "BTC-USD"
-    assert payload["timestamp_ns"] == 42
+    assert payload["timestamp_ns"] == "42"
     assert payload["buy_price"] == "100"
     assert payload["sell_price"] == "102"
     # Every Decimal field must be a string.
