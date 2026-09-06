@@ -59,17 +59,34 @@ The current verification summary and remaining live-soak gap are tracked in
 
 ## 3. Live Soak Observer
 
-Start the backend, note its process ID, then run:
+On Windows, run the launcher. It starts the backend, waits for readiness, blocks
+system sleep for the duration, samples, and stops the backend on exit:
+
+```powershell
+.\server\scripts\run_soak.ps1
+```
+
+It defaults to the full 24-hour run at a 60-second sample interval, which gives
+roughly 1,441 samples. Shorter runs take `-DurationSeconds` and `-SampleSeconds`.
+
+The observer can also be driven directly:
 
 ```bash
 python3 server/scripts/soak.py \
   --duration-seconds 86400 \
-  --sample-seconds 300 \
+  --sample-seconds 60 \
   --pid <backend-pid> \
   --output benchmarks/soak_YYYY-MM-DD.md
 ```
 
+Pass the pid of the interpreter actually running `arb.main`. A virtualenv or `uv
+run` launcher may re-exec the real interpreter as a child process, and sampling
+the launcher reports a flat few-megabyte RSS rather than the backend's memory.
+The launcher script resolves this automatically.
+
 The observer samples per-exchange ingest volume, adapter reconnects and gaps,
 canonical book eligibility and age, readiness, opportunities, background-task
-failures, HTTP failures, recovery durations, and backend RSS. Shorter durations
-are useful as smoke tests but must not be described as the required 24-hour soak.
+failures, HTTP failures, recovery durations, and backend RSS. It rewrites the
+report after every sample, so an interrupted run still leaves a readable report
+marked `in progress`. Shorter durations are useful as smoke tests but must not be
+described as the required 24-hour soak.
