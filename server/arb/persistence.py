@@ -64,7 +64,9 @@ class OpportunityStore:
         batch: list[ArbitrageOpportunity] = []
         while not self._stop_event.is_set():
             try:
-                item = await asyncio.wait_for(self._queue.get(), timeout=self.flush_interval_seconds)
+                item = await asyncio.wait_for(
+                    self._queue.get(), timeout=self.flush_interval_seconds
+                )
                 batch.append(item)
                 if len(batch) >= self.batch_size:
                     await self._flush(batch)
@@ -177,9 +179,7 @@ class OpportunityStore:
             return None
         return {"minute_start_ns": int(row[0]) * 60_000_000_000, "count": int(row[1])}
 
-    async def timeseries(
-        self, window_ns: int, bucket_seconds: int
-    ) -> list[dict[str, int | str]]:
+    async def timeseries(self, window_ns: int, bucket_seconds: int) -> list[dict[str, int | str]]:
         if bucket_seconds <= 0:
             raise ValueError("bucket_seconds must be positive")
         bucket_ns = bucket_seconds * 1_000_000_000

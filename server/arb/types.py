@@ -75,7 +75,10 @@ class ArbitrageOpportunity:
 
     def as_payload(self) -> dict[str, object]:
         payload = asdict(self)
-        return {key: str(value) if isinstance(value, Decimal) else value for key, value in payload.items()}
+        return {
+            key: str(value) if isinstance(value, Decimal) else value
+            for key, value in payload.items()
+        }
 
 
 @dataclass(frozen=True)

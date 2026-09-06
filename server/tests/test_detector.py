@@ -110,11 +110,14 @@ def test_threshold_is_strict_lower_bound() -> None:
     assert len(opps) == 1
     # At threshold + epsilon below, should be rejected.
     detector_strict = ArbitrageDetector(threshold_pct=Decimal("1.01"))
-    assert detector_strict.detect_for_pair(
-        "BTC-USD",
-        [book("a", "99", "1", "100", "1"), book("b", "101", "1", "102", "1")],
-        1,
-    ) == []
+    assert (
+        detector_strict.detect_for_pair(
+            "BTC-USD",
+            [book("a", "99", "1", "100", "1"), book("b", "101", "1", "102", "1")],
+            1,
+        )
+        == []
+    )
 
 
 def test_opportunity_payload_serializes_decimals_as_strings() -> None:

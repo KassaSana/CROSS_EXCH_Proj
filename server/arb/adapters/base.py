@@ -16,6 +16,7 @@ import httpx
 try:
     import structlog
 except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
+
     class _StructlogFallback:
         @staticmethod
         def get_logger(name: str) -> logging.Logger:
@@ -62,9 +63,7 @@ class ExchangeAdapter(abc.ABC):
         self.reconnect_count = 0
         self.last_error: str | None = None
         self._last_sequence_by_pair: dict[str, int] = {}
-        self._connection_state_callback: (
-            Callable[[str, bool], Awaitable[None] | None] | None
-        ) = None
+        self._connection_state_callback: Callable[[str, bool], Awaitable[None] | None] | None = None
         self._reconnect_requested = False
 
     def set_connection_state_callback(

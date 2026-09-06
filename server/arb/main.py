@@ -46,10 +46,7 @@ class BackgroundTaskSupervisor:
         return task
 
     def failures(self) -> list[dict[str, str]]:
-        return [
-            {"task": name, "error": error}
-            for name, error in sorted(self._failures.items())
-        ]
+        return [{"task": name, "error": error} for name, error in sorted(self._failures.items())]
 
     def stop(self) -> None:
         self._stopped = True
@@ -109,17 +106,15 @@ async def process_market_event(
         book_staleness_seconds.labels(exchange=event.exchange, pair=event.pair).set(
             status.age_ns / 1_000_000_000
         )
-    book_eligible.labels(exchange=event.exchange, pair=event.pair).set(
-        1 if status.eligible else 0
-    )
+    book_eligible.labels(exchange=event.exchange, pair=event.pair).set(1 if status.eligible else 0)
     if not status.eligible:
         await broadcaster.broadcast(LiveMessage(type="book_status", payload=status.as_payload()))
         return
 
-    await broadcaster.broadcast(LiveMessage(type="top_of_book", payload=result.top_of_book.as_payload()))
     await broadcaster.broadcast(
-        LiveMessage(type="book_status", payload=status.as_payload())
+        LiveMessage(type="top_of_book", payload=result.top_of_book.as_payload())
     )
+    await broadcaster.broadcast(LiveMessage(type="book_status", payload=status.as_payload()))
     pair_books = book_manager.eligible_books(
         event.pair, ("gemini", "coinbase", "binance"), eligibility_checked_ns
     )
@@ -129,7 +124,9 @@ async def process_market_event(
     for opportunity in opportunities:
         opportunities_total.labels(pair=opportunity.pair).inc()
         await store.enqueue(opportunity)
-        await broadcaster.broadcast(LiveMessage(type="opportunity", payload=opportunity.as_payload()))
+        await broadcaster.broadcast(
+            LiveMessage(type="opportunity", payload=opportunity.as_payload())
+        )
 
 
 async def consume_adapter(
@@ -170,6 +167,7 @@ async def run_pipeline() -> None:
     ]
     broadcaster = LiveBroadcaster()
     supervisor = BackgroundTaskSupervisor()
+
     async def report_connection_state(exchange: str, connected: bool) -> None:
         statuses = book_manager.set_exchange_connected(exchange, connected)
         for status in statuses:
@@ -183,9 +181,18 @@ async def run_pipeline() -> None:
     for adapter in adapters:
         adapter.set_connection_state_callback(report_connection_state)
     expected_pairs = [
-        *(("gemini", normalize_gemini_symbol(symbol)) for symbol in config.exchanges.get("gemini", [])),
-        *(("coinbase", normalize_coinbase_symbol(symbol)) for symbol in config.exchanges.get("coinbase", [])),
-        *(("binance", normalize_binance_symbol(symbol)) for symbol in config.exchanges.get("binance", [])),
+        *(
+            ("gemini", normalize_gemini_symbol(symbol))
+            for symbol in config.exchanges.get("gemini", [])
+        ),
+        *(
+            ("coinbase", normalize_coinbase_symbol(symbol))
+            for symbol in config.exchanges.get("coinbase", [])
+        ),
+        *(
+            ("binance", normalize_binance_symbol(symbol))
+            for symbol in config.exchanges.get("binance", [])
+        ),
     ]
     app = create_app(
         store,
@@ -213,12 +220,14 @@ async def run_pipeline() -> None:
                 detector=detector,
                 store=store,
                 broadcaster=broadcaster,
-            )
+            ),
         )
         for adapter in adapters
     ]
 
-    config_uvicorn = uvicorn.Config(app=app, host=config.server.host, port=config.server.port, log_level="info")
+    config_uvicorn = uvicorn.Config(
+        app=app, host=config.server.host, port=config.server.port, log_level="info"
+    )
     server = uvicorn.Server(config_uvicorn)
     try:
         await server.serve()

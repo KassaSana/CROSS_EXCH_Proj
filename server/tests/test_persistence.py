@@ -51,7 +51,9 @@ async def test_batched_flush_by_size_writes_all_rows(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_flush_interval_drains_partial_batch(tmp_path: Path) -> None:
-    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=500, flush_interval_seconds=0.05)
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"), batch_size=500, flush_interval_seconds=0.05
+    )
     await store.initialize()
     runner = asyncio.create_task(store.run())
     await store.enqueue(make_opp(timestamp_ns=1))
@@ -93,7 +95,9 @@ async def test_decimal_round_trip_preserves_string_form(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_recent_orders_descending_by_timestamp(tmp_path: Path) -> None:
-    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05)
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05
+    )
     await store.initialize()
     runner = asyncio.create_task(store.run())
     for ts in (10, 30, 20):
@@ -107,12 +111,16 @@ async def test_recent_orders_descending_by_timestamp(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_stats_window_filters_out_old_rows(tmp_path: Path) -> None:
-    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05)
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05
+    )
     await store.initialize()
     runner = asyncio.create_task(store.run())
     now_ns = time.time_ns()
     await store.enqueue(make_opp(timestamp_ns=now_ns, spread="2", profit="1"))
-    await store.enqueue(make_opp(timestamp_ns=now_ns - 10_000_000_000_000, spread="9", profit="100"))  # ~3h old
+    await store.enqueue(
+        make_opp(timestamp_ns=now_ns - 10_000_000_000_000, spread="9", profit="100")
+    )  # ~3h old
     await asyncio.sleep(0.2)
 
     one_hour_ns = 3_600_000_000_000
@@ -143,7 +151,9 @@ async def test_recent_on_empty_store_returns_empty_list(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_extended_stats_aggregates_within_window(tmp_path: Path) -> None:
-    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05)
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05
+    )
     await store.initialize()
     runner = asyncio.create_task(store.run())
     now_ns = time.time_ns()
@@ -152,7 +162,9 @@ async def test_extended_stats_aggregates_within_window(tmp_path: Path) -> None:
     await store.enqueue(make_opp(now_ns - 1, spread="3", profit="2", pair="BTC-USD"))
     await store.enqueue(make_opp(now_ns - 2, spread="1", profit="0.5", pair="BTC-USD"))
     await store.enqueue(make_opp(now_ns - 3, spread="5", profit="10", pair="ETH-USD"))
-    await store.enqueue(make_opp(now_ns - 10_000_000_000_000, spread="99", profit="999", pair="ETH-USD"))
+    await store.enqueue(
+        make_opp(now_ns - 10_000_000_000_000, spread="99", profit="999", pair="ETH-USD")
+    )
     await asyncio.sleep(0.2)
 
     stats = await store.extended_stats(window_ns=3_600_000_000_000)
@@ -167,7 +179,9 @@ async def test_extended_stats_aggregates_within_window(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_extended_stats_all_time_with_window_none(tmp_path: Path) -> None:
-    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05)
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05
+    )
     await store.initialize()
     runner = asyncio.create_task(store.run())
     await store.enqueue(make_opp(timestamp_ns=1, spread="2", pair="BTC-USD"))
@@ -196,7 +210,9 @@ async def test_extended_stats_empty_returns_safe_defaults(tmp_path: Path) -> Non
 
 @pytest.mark.asyncio
 async def test_peak_minute_returns_busiest_bucket(tmp_path: Path) -> None:
-    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=20, flush_interval_seconds=0.05)
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"), batch_size=20, flush_interval_seconds=0.05
+    )
     await store.initialize()
     runner = asyncio.create_task(store.run())
     minute_ns = 60_000_000_000
@@ -226,7 +242,9 @@ async def test_peak_minute_returns_none_when_empty(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_timeseries_buckets_and_orders_ascending(tmp_path: Path) -> None:
-    store = OpportunityStore(str(tmp_path / "db.sqlite3"), batch_size=20, flush_interval_seconds=0.05)
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"), batch_size=20, flush_interval_seconds=0.05
+    )
     await store.initialize()
     runner = asyncio.create_task(store.run())
     bucket_seconds = 60

@@ -207,6 +207,12 @@ class CoinbaseAdapter(ExchangeAdapter):
             kind=EventKind.SNAPSHOT,
             sequence=max(int(payload.get("sequence", trigger_sequence)), trigger_sequence),
             timestamp_ns=time.time_ns(),
-            bids=tuple(PriceLevel(price=Decimal(price), size=Decimal(size)) for price, size, *_ in payload["bids"]),
-            asks=tuple(PriceLevel(price=Decimal(price), size=Decimal(size)) for price, size, *_ in payload["asks"]),
+            bids=tuple(
+                PriceLevel(price=Decimal(price), size=Decimal(size))
+                for price, size, *_ in payload["bids"]
+            ),
+            asks=tuple(
+                PriceLevel(price=Decimal(price), size=Decimal(size))
+                for price, size, *_ in payload["asks"]
+            ),
         )

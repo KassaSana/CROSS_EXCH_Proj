@@ -37,9 +37,7 @@ class GeminiAdapter(ExchangeAdapter):
 
     async def subscribe(self, websocket: Any) -> None:
         streams = [f"{pair.lower().replace('-', '')}@depth" for pair in self.pairs]
-        await websocket.send(
-            self.encode({"id": 1, "method": "SUBSCRIBE", "params": streams})
-        )
+        await websocket.send(self.encode({"id": 1, "method": "SUBSCRIBE", "params": streams}))
 
     async def parse_message(self, message: str) -> list[MarketEvent]:
         payload = json.loads(message)

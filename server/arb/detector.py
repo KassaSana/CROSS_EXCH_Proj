@@ -10,7 +10,9 @@ class ArbitrageDetector:
     def __init__(self, threshold_pct: Decimal) -> None:
         self.threshold_pct = threshold_pct
 
-    def detect_for_pair(self, pair: str, books: list[TopOfBook], timestamp_ns: int) -> list[ArbitrageOpportunity]:
+    def detect_for_pair(
+        self, pair: str, books: list[TopOfBook], timestamp_ns: int
+    ) -> list[ArbitrageOpportunity]:
         opportunities: list[ArbitrageOpportunity] = []
         if len(books) < 2:
             return opportunities
@@ -19,7 +21,9 @@ class ArbitrageDetector:
             if sell_book.best_bid_price <= buy_book.best_ask_price:
                 continue
 
-            spread_pct = ((sell_book.best_bid_price - buy_book.best_ask_price) / buy_book.best_ask_price) * Decimal("100")
+            spread_pct = (
+                (sell_book.best_bid_price - buy_book.best_ask_price) / buy_book.best_ask_price
+            ) * Decimal("100")
             if spread_pct < self.threshold_pct:
                 continue
 
