@@ -4,8 +4,9 @@ import asyncio
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Annotated, Literal
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
@@ -22,9 +23,11 @@ from arb.orderbook import OrderBookManager
 from arb.persistence import OpportunityStore
 from arb.types import LiveMessage
 
+Window = Literal["1h", "4h", "24h", "1d", "72h", "1w"]
+
 
 def window_to_ns(window: str) -> int:
-    values = {
+    values: dict[str, int] = {
         "1h": 3_600_000_000_000,
         "4h": 14_400_000_000_000,
         "24h": 86_400_000_000_000,
@@ -144,11 +147,13 @@ def create_app(
     started_at: list[int] = started_at_holder if started_at_holder is not None else [time.time_ns()]
 
     @app.get("/api/opportunities/recent")
-    async def recent_opportunities(limit: int = 100) -> list[dict[str, str | int]]:
+    async def recent_opportunities(
+        limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    ) -> list[dict[str, str | int]]:
         return await store.recent(limit=limit)
 
     @app.get("/api/stats")
-    async def stats(window: str = "1h") -> dict[str, str | int]:
+    async def stats(window: Window = "1h") -> dict[str, str | int]:
         return await store.stats(window_to_ns(window))
 
     @app.get("/api/system/overview")
@@ -163,17 +168,18 @@ def create_app(
         }
 
     @app.get("/api/system/stats")
-    async def system_stats(window: str = "1h") -> dict[str, object]:
+    async def system_stats(window: Window = "1h") -> dict[str, object]:
         window_ns = window_to_ns(window)
         extended = await store.extended_stats(window_ns=window_ns)
         peak = await store.peak_minute(window_ns=window_ns)
         return {"window": window, **extended, "peak_minute": peak}
 
     @app.get("/api/system/timeseries")
-    async def system_timeseries(window: str = "1h", bucket_seconds: int = 60) -> dict[str, object]:
+    async def system_timeseries(
+        window: Window = "1h",
+        bucket_seconds: Annotated[int, Query(ge=1, le=86_400)] = 60,
+    ) -> dict[str, object]:
         window_ns = window_to_ns(window)
-        if bucket_seconds <= 0:
-            bucket_seconds = 60
         points = await store.timeseries(window_ns=window_ns, bucket_seconds=bucket_seconds)
         return {"window": window, "bucket_seconds": bucket_seconds, "points": points}
 
