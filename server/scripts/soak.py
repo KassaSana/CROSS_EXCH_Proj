@@ -30,6 +30,7 @@ def percentile(values: list[int], fraction: float) -> int | None:
 
 def process_rss_bytes(pid: int) -> int | None:
     if sys.platform == "win32":
+
         class ProcessMemoryCounters(ctypes.Structure):
             _fields_ = [
                 ("cb", ctypes.c_ulong),
@@ -198,7 +199,11 @@ class SoakReport:
             reconnect_delta = observation.last_reconnects - (observation.first_reconnects or 0)
             gap_delta = observation.last_gaps - (observation.first_gaps or 0)
             event_delta = observation.last_events - (observation.first_events or 0)
-            age = "-" if observation.max_message_age_ms is None else f"{observation.max_message_age_ms} ms"
+            age = (
+                "-"
+                if observation.max_message_age_ms is None
+                else f"{observation.max_message_age_ms} ms"
+            )
             lines.append(
                 f"| {exchange} | {event_delta} | {reconnect_delta} | {gap_delta} | {age} | "
                 f"{observation.last_error or '-'} |"
@@ -214,10 +219,13 @@ class SoakReport:
             ]
         )
         for key, observation in sorted(self.books.items()):
-            reasons = ", ".join(
-                f"{reason}={count}"
-                for reason, count in sorted(observation.ineligible_reasons.items())
-            ) or "-"
+            reasons = (
+                ", ".join(
+                    f"{reason}={count}"
+                    for reason, count in sorted(observation.ineligible_reasons.items())
+                )
+                or "-"
+            )
             p95_age = percentile(observation.ages_ms, 0.95)
             max_age = max(observation.ages_ms) if observation.ages_ms else None
             recoveries = ", ".join(f"{value:.1f}s" for value in observation.recovery_seconds) or "-"

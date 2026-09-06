@@ -111,7 +111,9 @@ class OrderBookManager:
         now = self._clock()
         return [self.eligibility(exchange, pair, now) for exchange, pair in pairs]
 
-    def apply(self, event: MarketEvent, received_monotonic_ns: int | None = None) -> BookUpdateResult:
+    def apply(
+        self, event: MarketEvent, received_monotonic_ns: int | None = None
+    ) -> BookUpdateResult:
         key = (event.exchange, event.pair)
         book = self._books.setdefault(key, OrderBook())
         book.connected = self._exchange_connected.get(event.exchange, True)
@@ -216,8 +218,15 @@ class OrderBookManager:
             elif top.best_bid_price >= top.best_ask_price:
                 reason = "crossed"
         return BookEligibility(
-            exchange, pair, book.initialized, book.continuous, book.connected,
-            age_ns, self._max_age_ns, reason is None, reason,
+            exchange,
+            pair,
+            book.initialized,
+            book.continuous,
+            book.connected,
+            age_ns,
+            self._max_age_ns,
+            reason is None,
+            reason,
         )
 
     def eligible_top_of_book(
@@ -258,13 +267,17 @@ class OrderBookManager:
     def known_pairs(self) -> list[tuple[str, str]]:
         return sorted(self._books.keys())
 
-    def level_snapshot(self, exchange: str, pair: str, limit: int = 10) -> tuple[list[PriceLevel], list[PriceLevel]] | None:
+    def level_snapshot(
+        self, exchange: str, pair: str, limit: int = 10
+    ) -> tuple[list[PriceLevel], list[PriceLevel]] | None:
         book = self._books.get((exchange, pair))
         if not book or book.stale or book.sequence is None:
             return None
         return (book.bids.top_n(limit), book.asks.top_n(limit))
 
-    def _apply_snapshot(self, book: OrderBook, event: MarketEvent, received_monotonic_ns: int) -> None:
+    def _apply_snapshot(
+        self, book: OrderBook, event: MarketEvent, received_monotonic_ns: int
+    ) -> None:
         book.clear()
         for level in event.bids:
             book.bids.set_level(level.price, level.size)

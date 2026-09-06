@@ -64,9 +64,7 @@ class LiveBroadcaster:
             if initial_state is not None:
                 connection.queue.put_nowait(self._envelope(initial_state()))
             self._clients[websocket] = connection
-            connection.sender_task = asyncio.create_task(
-                self._send_messages(websocket, connection)
-            )
+            connection.sender_task = asyncio.create_task(self._send_messages(websocket, connection))
             ws_clients.set(len(self._clients))
 
     async def disconnect(self, websocket: WebSocket) -> None:
@@ -97,9 +95,7 @@ class LiveBroadcaster:
                 connection.sender_task.cancel()
             asyncio.create_task(self._close_slow_client(client))
 
-    async def _send_messages(
-        self, websocket: WebSocket, connection: _ClientConnection
-    ) -> None:
+    async def _send_messages(self, websocket: WebSocket, connection: _ClientConnection) -> None:
         try:
             while True:
                 await websocket.send_json(await connection.queue.get())
@@ -188,7 +184,9 @@ def create_app(
 
     @app.get("/api/pairs")
     async def pairs() -> list[dict[str, str]]:
-        return [{"exchange": exchange, "pair": pair} for exchange, pair in book_manager.known_pairs()]
+        return [
+            {"exchange": exchange, "pair": pair} for exchange, pair in book_manager.known_pairs()
+        ]
 
     @app.get("/api/book-status")
     async def book_status() -> list[dict[str, object]]:
@@ -228,9 +226,9 @@ def create_app(
                 1 if status.eligible else 0
             )
             if status.age_ns is not None:
-                book_staleness_seconds.labels(
-                    exchange=status.exchange, pair=status.pair
-                ).set(status.age_ns / 1_000_000_000)
+                book_staleness_seconds.labels(exchange=status.exchange, pair=status.pair).set(
+                    status.age_ns / 1_000_000_000
+                )
         payload, content_type = render_metrics()
         return Response(content=payload, media_type=content_type)
 

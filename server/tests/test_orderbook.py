@@ -41,8 +41,12 @@ def test_snapshot_initializes_book() -> None:
 
 def test_delta_updates_best_levels() -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
-    result = manager.apply(event(kind=EventKind.DELTA, sequence=11, bids=[("100.5", "1.5")], asks=[]))
+    manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")])
+    )
+    result = manager.apply(
+        event(kind=EventKind.DELTA, sequence=11, bids=[("100.5", "1.5")], asks=[])
+    )
     assert result.accepted is True
     assert manager.best_bid("gemini", "BTC-USD") == Decimal("100.5")
 
@@ -63,7 +67,9 @@ def test_size_zero_removes_level() -> None:
 
 def test_out_of_order_delta_is_rejected() -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")])
+    )
     result = manager.apply(event(kind=EventKind.DELTA, sequence=10, bids=[("100.5", "1")], asks=[]))
     assert result.accepted is False
     assert result.reason == "out_of_order"
@@ -71,7 +77,9 @@ def test_out_of_order_delta_is_rejected() -> None:
 
 def test_gap_detection_marks_book_stale() -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")])
+    )
     result = manager.apply(event(kind=EventKind.DELTA, sequence=12, bids=[("100.5", "1")], asks=[]))
     assert result.accepted is False
     assert result.reason == "sequence_gap"
@@ -80,7 +88,9 @@ def test_gap_detection_marks_book_stale() -> None:
 
 def test_stale_book_blocks_new_deltas_until_snapshot() -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")])
+    )
     manager.apply(event(kind=EventKind.DELTA, sequence=12, bids=[("100.5", "1")], asks=[]))
     result = manager.apply(event(kind=EventKind.DELTA, sequence=13, bids=[("100.7", "1")], asks=[]))
     assert result.accepted is False
@@ -89,7 +99,9 @@ def test_stale_book_blocks_new_deltas_until_snapshot() -> None:
 
 def test_crossed_book_resets_book() -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")])
+    )
     result = manager.apply(event(kind=EventKind.DELTA, sequence=11, bids=[("102", "1")], asks=[]))
     assert result.accepted is False
     assert result.reason == "crossed_book"
@@ -97,7 +109,9 @@ def test_crossed_book_resets_book() -> None:
 
 def test_cold_start_delta_is_rejected_until_snapshot() -> None:
     manager = OrderBookManager()
-    result = manager.apply(event(kind=EventKind.DELTA, sequence=1, bids=[("100", "1")], asks=[("101", "1")]))
+    result = manager.apply(
+        event(kind=EventKind.DELTA, sequence=1, bids=[("100", "1")], asks=[("101", "1")])
+    )
     assert result.accepted is False
     assert result.reason == "book_stale"
     assert result.stale is True
@@ -105,12 +119,16 @@ def test_cold_start_delta_is_rejected_until_snapshot() -> None:
 
 def test_recovery_after_gap_with_new_snapshot() -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")]))
+    manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("100", "2")], asks=[("101", "3")])
+    )
     # Trigger a gap.
     manager.apply(event(kind=EventKind.DELTA, sequence=12, bids=[("100.5", "1")], asks=[]))
     assert manager.snapshot("gemini", "BTC-USD").stale is True
     # Recover with a fresh snapshot at the new sequence.
-    result = manager.apply(event(kind=EventKind.SNAPSHOT, sequence=20, bids=[("99", "1")], asks=[("100", "1")]))
+    result = manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=20, bids=[("99", "1")], asks=[("100", "1")])
+    )
     assert result.accepted is True
     assert manager.snapshot("gemini", "BTC-USD").stale is False
     assert manager.best_bid("gemini", "BTC-USD") == Decimal("99")
@@ -119,8 +137,26 @@ def test_recovery_after_gap_with_new_snapshot() -> None:
 
 def test_multiple_pairs_and_exchanges_are_isolated() -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")], exchange="gemini", pair="BTC-USD"))
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("200", "1")], asks=[("201", "1")], exchange="coinbase", pair="ETH-USD"))
+    manager.apply(
+        event(
+            kind=EventKind.SNAPSHOT,
+            sequence=1,
+            bids=[("100", "1")],
+            asks=[("101", "1")],
+            exchange="gemini",
+            pair="BTC-USD",
+        )
+    )
+    manager.apply(
+        event(
+            kind=EventKind.SNAPSHOT,
+            sequence=1,
+            bids=[("200", "1")],
+            asks=[("201", "1")],
+            exchange="coinbase",
+            pair="ETH-USD",
+        )
+    )
     assert manager.best_bid("gemini", "BTC-USD") == Decimal("100")
     assert manager.best_bid("coinbase", "ETH-USD") == Decimal("200")
     assert manager.best_ask("coinbase", "BTC-USD") is None
@@ -129,8 +165,26 @@ def test_multiple_pairs_and_exchanges_are_isolated() -> None:
 
 def test_known_pairs_returns_all_seen_keys_sorted() -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")], exchange="binance", pair="BTC-USD"))
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")], exchange="gemini", pair="BTC-USD"))
+    manager.apply(
+        event(
+            kind=EventKind.SNAPSHOT,
+            sequence=1,
+            bids=[("100", "1")],
+            asks=[("101", "1")],
+            exchange="binance",
+            pair="BTC-USD",
+        )
+    )
+    manager.apply(
+        event(
+            kind=EventKind.SNAPSHOT,
+            sequence=1,
+            bids=[("100", "1")],
+            asks=[("101", "1")],
+            exchange="gemini",
+            pair="BTC-USD",
+        )
+    )
     assert manager.known_pairs() == [("binance", "BTC-USD"), ("gemini", "BTC-USD")]
 
 
@@ -182,7 +236,9 @@ def test_size_zero_in_snapshot_does_not_create_level() -> None:
 
 def test_remove_nonexistent_level_is_noop() -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")]))
+    manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")])
+    )
     # Removing a price level that doesn't exist must not crash or alter state.
     result = manager.apply(event(kind=EventKind.DELTA, sequence=2, bids=[("50", "0")], asks=[]))
     assert result.accepted is True
@@ -212,7 +268,9 @@ def test_book_becomes_ineligible_when_age_limit_is_exceeded() -> None:
 
 def test_disconnect_invalidates_book_until_new_snapshot() -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")]))
+    manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=1, bids=[("100", "1")], asks=[("101", "1")])
+    )
     assert manager.eligibility("gemini", "BTC-USD").eligible is True
 
     manager.set_exchange_connected("gemini", False)
@@ -226,6 +284,8 @@ def test_disconnect_invalidates_book_until_new_snapshot() -> None:
     assert delta.accepted is False
     assert delta.reason == "book_stale"
 
-    snapshot = manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("99", "1")], asks=[("100", "1")]))
+    snapshot = manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=10, bids=[("99", "1")], asks=[("100", "1")])
+    )
     assert snapshot.accepted is True
     assert manager.eligibility("gemini", "BTC-USD").eligible is True

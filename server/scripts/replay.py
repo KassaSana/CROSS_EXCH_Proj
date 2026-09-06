@@ -59,7 +59,9 @@ async def replay_capture(path: Path) -> dict[str, int | str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Replay recorded websocket messages.")
-    parser.add_argument("path", type=Path, help="Path to a JSONL capture file or directory of capture files")
+    parser.add_argument(
+        "path", type=Path, help="Path to a JSONL capture file or directory of capture files"
+    )
     args = parser.parse_args()
 
     paths = [args.path] if args.path.is_file() else sorted(args.path.glob("*.jsonl"))

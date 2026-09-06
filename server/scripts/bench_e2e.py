@@ -51,8 +51,12 @@ def parse_event(message: str, timestamp_ns: int) -> MarketEvent:
         kind=EventKind(payload["kind"]),
         sequence=int(payload["sequence"]),
         timestamp_ns=timestamp_ns,
-        bids=tuple(PriceLevel(price=Decimal(price), size=Decimal(size)) for price, size in payload["bids"]),
-        asks=tuple(PriceLevel(price=Decimal(price), size=Decimal(size)) for price, size in payload["asks"]),
+        bids=tuple(
+            PriceLevel(price=Decimal(price), size=Decimal(size)) for price, size in payload["bids"]
+        ),
+        asks=tuple(
+            PriceLevel(price=Decimal(price), size=Decimal(size)) for price, size in payload["asks"]
+        ),
     )
 
 
@@ -102,7 +106,9 @@ async def synthetic_feed(websocket: websockets.ServerConnection, iterations: int
         )
 
 
-def summarize_latencies(latencies_ns: list[int], iterations: int, elapsed_seconds: float) -> dict[str, Any]:
+def summarize_latencies(
+    latencies_ns: list[int], iterations: int, elapsed_seconds: float
+) -> dict[str, Any]:
     if len(latencies_ns) < 2:
         raise ValueError("Need at least two samples to compute percentile stats.")
     quantiles = statistics.quantiles(latencies_ns, n=100)
@@ -122,7 +128,9 @@ async def run_benchmark(iterations: int) -> dict[str, Any]:
     manager = OrderBookManager()
     latencies_ns: list[int] = []
 
-    async with websockets.serve(lambda websocket: synthetic_feed(websocket, iterations), HOST, 0) as server:
+    async with websockets.serve(
+        lambda websocket: synthetic_feed(websocket, iterations), HOST, 0
+    ) as server:
         port = server.sockets[0].getsockname()[1]
         started = time.perf_counter()
         async with websockets.connect(f"ws://{HOST}:{port}") as websocket:
@@ -149,8 +157,15 @@ async def run_benchmark(iterations: int) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark end-to-end detection latency under synthetic websocket load.")
-    parser.add_argument("--iterations", type=int, default=10_000, help="Number of synthetic delta events to benchmark.")
+    parser = argparse.ArgumentParser(
+        description="Benchmark end-to-end detection latency under synthetic websocket load."
+    )
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=10_000,
+        help="Number of synthetic delta events to benchmark.",
+    )
     args = parser.parse_args()
 
     result = asyncio.run(run_benchmark(args.iterations))

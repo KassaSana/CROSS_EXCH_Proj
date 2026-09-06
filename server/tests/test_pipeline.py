@@ -272,9 +272,7 @@ async def test_background_task_supervisor_records_unexpected_failure(monkeypatch
     await asyncio.gather(task, return_exceptions=True)
     await asyncio.sleep(0)
 
-    assert supervisor.failures() == [
-        {"task": "adapter:gemini", "error": "RuntimeError('boom')"}
-    ]
+    assert supervisor.failures() == [{"task": "adapter:gemini", "error": "RuntimeError('boom')"}]
     metric.labels.assert_called_once_with(task="adapter:gemini")
     metric.labels.return_value.inc.assert_called_once_with()
     logged.assert_called_once_with(

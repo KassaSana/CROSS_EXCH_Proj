@@ -52,7 +52,9 @@ def make_manager_with_top(bid: str, ask: str) -> OrderBookManager:
 async def test_reconcile_next_handles_mismatch_without_crashing() -> None:
     adapter = ReconcileAdapter(["BTC-USD"])
     manager = make_manager_with_top("100", "101")
-    reconciler = SnapshotReconciler([adapter], manager, [("stub", "BTC-USD")], interval_seconds=0.01)
+    reconciler = SnapshotReconciler(
+        [adapter], manager, [("stub", "BTC-USD")], interval_seconds=0.01
+    )
     await reconciler.reconcile_next()
 
 

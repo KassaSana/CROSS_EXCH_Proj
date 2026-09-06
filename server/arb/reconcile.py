@@ -24,7 +24,13 @@ class ReconcileTarget:
 
 
 class SnapshotReconciler:
-    def __init__(self, adapters: list[ExchangeAdapter], book_manager: OrderBookManager, pairs: list[tuple[str, str]], interval_seconds: float = 60.0) -> None:
+    def __init__(
+        self,
+        adapters: list[ExchangeAdapter],
+        book_manager: OrderBookManager,
+        pairs: list[tuple[str, str]],
+        interval_seconds: float = 60.0,
+    ) -> None:
         self._adapter_by_name = {adapter.name: adapter for adapter in adapters}
         self.book_manager = book_manager
         self.interval_seconds = interval_seconds
@@ -64,11 +70,15 @@ class SnapshotReconciler:
             mismatch_pct=str(mismatch_pct),
         )
 
-    def _side_mismatch_pct(self, live_levels: list[PriceLevel], snapshot_levels: list[PriceLevel]) -> Decimal:
+    def _side_mismatch_pct(
+        self, live_levels: list[PriceLevel], snapshot_levels: list[PriceLevel]
+    ) -> Decimal:
         comparisons = zip(live_levels, snapshot_levels)
         mismatch_pct = Decimal("0")
         for live_level, snapshot_level in comparisons:
-            baseline = snapshot_level.price if snapshot_level.price != Decimal("0") else Decimal("1")
+            baseline = (
+                snapshot_level.price if snapshot_level.price != Decimal("0") else Decimal("1")
+            )
             diff_pct = (abs(live_level.price - snapshot_level.price) / baseline) * Decimal("100")
             mismatch_pct = max(mismatch_pct, diff_pct)
         return mismatch_pct

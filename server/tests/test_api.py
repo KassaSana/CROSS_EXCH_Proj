@@ -66,14 +66,18 @@ async def test_recent_endpoint_returns_saved_rows(tmp_path: Path) -> None:
 
 
 def test_healthz_is_alive() -> None:
-    client = TestClient(create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster()))
+    client = TestClient(
+        create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster())
+    )
     response = client.get("/healthz")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
 def test_metrics_endpoint_exposes_prometheus_payload() -> None:
-    client = TestClient(create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster()))
+    client = TestClient(
+        create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster())
+    )
     response = client.get("/metrics")
     assert response.status_code == 200
     assert "arb_ws_clients" in response.text
@@ -86,7 +90,11 @@ def test_adapter_status_returns_runtime_fields() -> None:
     adapter.reconnect_count = 2
     adapter.last_error = "socket reset"
 
-    client = TestClient(create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster(), adapters=[adapter]))
+    client = TestClient(
+        create_app(
+            OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster(), adapters=[adapter]
+        )
+    )
     response = client.get("/api/adapters")
 
     assert response.status_code == 200
@@ -322,11 +330,13 @@ async def test_broadcaster_sends_to_all_clients() -> None:
     await broadcaster.connect(b)  # type: ignore[arg-type]
     await broadcaster.broadcast(LiveMessage(type="opportunity", payload={"pair": "BTC-USD"}))
     await asyncio.sleep(0)
-    assert a.sent == [{
-        "type": "opportunity",
-        "payload": {"pair": "BTC-USD"},
-        "stream_sequence": 1,
-    }]
+    assert a.sent == [
+        {
+            "type": "opportunity",
+            "payload": {"pair": "BTC-USD"},
+            "stream_sequence": 1,
+        }
+    ]
     assert b.sent == a.sent
 
 
@@ -355,7 +365,9 @@ async def test_broadcaster_with_no_clients_is_noop() -> None:
 
 
 def test_websocket_route_accepts_connection() -> None:
-    client = TestClient(create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster()))
+    client = TestClient(
+        create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster())
+    )
     with client.websocket_connect("/ws/live") as ws:
         snapshot = ws.receive_json()
         assert snapshot["type"] == "state_snapshot"
@@ -471,7 +483,9 @@ async def test_system_overview_reports_uptime_and_started_at(tmp_path: Path) -> 
     await store.initialize()
     started_at_holder = [time.time_ns() - 5_000_000_000]  # started 5s ago
     client = TestClient(
-        create_app(store, OrderBookManager(), LiveBroadcaster(), started_at_holder=started_at_holder)
+        create_app(
+            store, OrderBookManager(), LiveBroadcaster(), started_at_holder=started_at_holder
+        )
     )
     response = client.get("/api/system/overview")
     assert response.status_code == 200
@@ -484,13 +498,19 @@ async def test_system_overview_reports_uptime_and_started_at(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_system_stats_endpoint_returns_extended_aggregates(tmp_path: Path) -> None:
-    store = OpportunityStore(str(tmp_path / "sys.sqlite3"), batch_size=10, flush_interval_seconds=0.05)
+    store = OpportunityStore(
+        str(tmp_path / "sys.sqlite3"), batch_size=10, flush_interval_seconds=0.05
+    )
     await store.initialize()
     runner = asyncio.create_task(store.run())
     now = time.time_ns()
     await store.enqueue(_seed_opp(store, timestamp_ns=now, spread_pct=Decimal("2"), pair="BTC-USD"))
-    await store.enqueue(_seed_opp(store, timestamp_ns=now - 1, spread_pct=Decimal("4"), pair="BTC-USD"))
-    await store.enqueue(_seed_opp(store, timestamp_ns=now - 2, spread_pct=Decimal("1"), pair="ETH-USD"))
+    await store.enqueue(
+        _seed_opp(store, timestamp_ns=now - 1, spread_pct=Decimal("4"), pair="BTC-USD")
+    )
+    await store.enqueue(
+        _seed_opp(store, timestamp_ns=now - 2, spread_pct=Decimal("1"), pair="ETH-USD")
+    )
     await asyncio.sleep(0.2)
     await store.close()
     runner.cancel()
@@ -508,7 +528,9 @@ async def test_system_stats_endpoint_returns_extended_aggregates(tmp_path: Path)
 
 @pytest.mark.asyncio
 async def test_system_timeseries_endpoint_returns_buckets(tmp_path: Path) -> None:
-    store = OpportunityStore(str(tmp_path / "ts.sqlite3"), batch_size=10, flush_interval_seconds=0.05)
+    store = OpportunityStore(
+        str(tmp_path / "ts.sqlite3"), batch_size=10, flush_interval_seconds=0.05
+    )
     await store.initialize()
     runner = asyncio.create_task(store.run())
     bucket_ns = 60 * 1_000_000_000
@@ -534,7 +556,9 @@ async def test_system_reset_zeros_uptime_without_clearing_history(tmp_path: Path
     await store.initialize()
     started_at_holder = [time.time_ns() - 60_000_000_000]  # started 60s ago
     client = TestClient(
-        create_app(store, OrderBookManager(), LiveBroadcaster(), started_at_holder=started_at_holder)
+        create_app(
+            store, OrderBookManager(), LiveBroadcaster(), started_at_holder=started_at_holder
+        )
     )
     before = client.get("/api/system/overview").json()
     assert before["uptime_seconds"] >= 60

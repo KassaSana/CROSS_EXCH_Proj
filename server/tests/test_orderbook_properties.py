@@ -67,7 +67,9 @@ def test_orderbook_invariants_hold_under_generated_updates(
     deltas: list[tuple[list[tuple[str, str]], list[tuple[str, str]]]],
 ) -> None:
     manager = OrderBookManager()
-    result = manager.apply(event(kind=EventKind.SNAPSHOT, sequence=1, bids=snapshot_bids, asks=snapshot_asks))
+    result = manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=1, bids=snapshot_bids, asks=snapshot_asks)
+    )
 
     assert result.accepted is True
     assert_book_invariants(manager)
@@ -94,7 +96,9 @@ def test_sequence_gap_detection_fires_when_expected(
     delta_asks: list[tuple[str, str]],
 ) -> None:
     manager = OrderBookManager()
-    manager.apply(event(kind=EventKind.SNAPSHOT, sequence=10, bids=snapshot_bids, asks=snapshot_asks))
+    manager.apply(
+        event(kind=EventKind.SNAPSHOT, sequence=10, bids=snapshot_bids, asks=snapshot_asks)
+    )
 
     result: BookUpdateResult = manager.apply(
         event(kind=EventKind.DELTA, sequence=10 + gap_size, bids=delta_bids, asks=delta_asks)
