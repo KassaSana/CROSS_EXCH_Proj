@@ -161,7 +161,7 @@ npm run lint
 npm run build
 ```
 
-The repository currently has 148 passing backend tests. CI runs tests with coverage,
+The repository currently has 150 passing backend tests. CI runs tests with coverage,
 strict type checking, linting, and the production dashboard build.
 
 ## Benchmarks and replay

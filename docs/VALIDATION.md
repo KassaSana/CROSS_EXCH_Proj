@@ -6,7 +6,7 @@ tests, and focused documents such as [`RESYNC.md`](RESYNC.md).
 
 ## Automated verification
 
-Current baseline: 148 backend tests passing as of 2026-09-06.
+Current baseline: 150 backend tests passing as of 2026-09-06.
 
 The suite covers:
 
