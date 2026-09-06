@@ -1,30 +1,44 @@
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.12
-    hooks:
-      - id: ruff-check
-      - id: ruff-format
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.18.2
-    hooks:
-      - id: mypy
-        args: ["--strict", "server/arb"]
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
-      - id: end-of-file-fixer
-      - id: trailing-whitespace
   - repo: local
     hooks:
+      - id: whitespace-check
+        name: whitespace-check
+        entry: git diff --cached --check
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: ruff-check
+        name: ruff-check
+        entry: python server/scripts/run_backend_tool.py ruff check server
+        language: system
+        pass_filenames: false
+        files: ^(server/|pyproject\.toml)
+
+      - id: ruff-format
+        name: ruff-format
+        entry: python server/scripts/run_backend_tool.py ruff format --check server
+        language: system
+        pass_filenames: false
+        files: ^(server/|pyproject\.toml)
+
+      - id: mypy
+        name: mypy
+        entry: python server/scripts/run_backend_tool.py mypy --strict server/arb
+        language: system
+        pass_filenames: false
+        files: ^(server/|pyproject\.toml)
+
       - id: dashboard-eslint
         name: dashboard-eslint
-        entry: bash -lc 'cd dashboard && npm run lint'
+        entry: npm --prefix dashboard run lint
         language: system
         pass_filenames: false
         files: ^dashboard/
+
       - id: dashboard-typecheck
         name: dashboard-typecheck
-        entry: bash -lc 'cd dashboard && npm run typecheck'
+        entry: npm --prefix dashboard run typecheck
         language: system
         pass_filenames: false
         files: ^dashboard/
