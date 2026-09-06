@@ -99,6 +99,32 @@ async def test_mismatch_within_threshold_does_not_increment_metric() -> None:
 
 
 @pytest.mark.asyncio
+async def test_missing_snapshot_levels_count_as_a_mismatch() -> None:
+    from arb.metrics import reconcile_mismatches_total
+
+    class EmptySnapshotAdapter(ReconcileAdapter):
+        async def fetch_snapshot(self, pair: str, trigger_sequence: int) -> MarketEvent:
+            return MarketEvent(
+                exchange=self.name,
+                pair=pair,
+                kind=EventKind.SNAPSHOT,
+                sequence=trigger_sequence,
+                timestamp_ns=1,
+                bids=(),
+                asks=(),
+            )
+
+    adapter = EmptySnapshotAdapter(["BTC-USD"])
+    manager = make_manager_with_top("100", "101")
+    counter = reconcile_mismatches_total.labels(exchange="stub", pair="BTC-USD")
+    before = counter._value.get()
+
+    await SnapshotReconciler([adapter], manager, [("stub", "BTC-USD")]).reconcile_next()
+
+    assert counter._value.get() - before == 1
+
+
+@pytest.mark.asyncio
 async def test_reconcile_skips_when_book_is_stale() -> None:
     adapter = ReconcileAdapter(["BTC-USD"])
     fetched: list[str] = []
