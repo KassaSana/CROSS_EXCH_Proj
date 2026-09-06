@@ -1,95 +1,218 @@
-# Cross-Exchange Arbitrage Detector
+# ArbSync
 
-Real-time Python + React system that ingests public crypto order books from Gemini, Coinbase, and Binance, maintains in-memory L2 books, detects theoretical cross-exchange arbitrage, persists events to SQLite, and streams live state to a dashboard.
+ArbSync is a real-time, detection-only crypto arbitrage system. It consumes public
+level-2 order books from Gemini, Coinbase, and Binance.US, normalizes each feed,
+maintains trusted in-memory books, detects cross-exchange spreads, stores theoretical
+opportunities in SQLite, and streams live state to a React dashboard.
 
-![Architecture](docs/architecture.svg)
+No API keys are required. ArbSync does not place trades.
 
-## Dashboard
+![ArbSync architecture](docs/architecture.svg)
 
-The dashboard shows:
-- live top-of-book spreads across venues
-- recent theoretical arbitrage opportunities
-- rolling opportunity statistics
-- adapter health, reconnects, and stale-feed status
+## What it demonstrates
 
-## Numbers
+- Concurrent WebSocket ingestion with exchange-specific reconnect and recovery logic
+- Snapshot/delta sequencing and explicit book eligibility checks
+- Event-driven arbitrage detection using `Decimal` prices and sizes
+- Bounded persistence and dashboard queues so slow consumers do not block ingestion
+- FastAPI REST, WebSocket, health, readiness, and Prometheus interfaces
+- A React/TypeScript dashboard for spreads, feed health, opportunities, and statistics
+- Fixture replay, property-based tests, synthetic benchmarks, and live-soak tooling
 
-Measured locally from this repo state:
+The default configuration tracks 9 assets on all 3 exchanges: 27 exchange/pair
+subscriptions in total. See [`config.toml`](config.toml) for the exact symbols.
 
-- End-to-end synthetic ingest-to-opportunity benchmark: `p50 16.00 µs`, `p95 17.33 µs`, `p99 27.29 µs`, `max 216.67 µs`, `1,920,581 events/min`
-- Detector-only microbenchmark: `p50 3.42 µs`, `p95 3.88 µs`, `16,454,491 evaluations/min`
-- Backend detector/orderbook coverage: `94.52%`
-- Exchanges integrated: `3`
-- Configured subscriptions: `30` exchange/pair streams across `10` normalized assets
+## How data moves through the system
 
-Benchmark methodology and raw commands are in [BENCHMARKS.md](BENCHMARKS.md) and [benchmarks/results.json](benchmarks/results.json).
-
-## Important Caveat
-
-All detected opportunities are theoretical. Reported profit excludes fees, slippage, transfer latency, inventory constraints, and execution risk. This project is a detection and observability system, not an execution engine.
-
-## Tech Stack
-
-- Backend: Python 3.11, asyncio, FastAPI, websockets, aiosqlite, structlog
-- Frontend: React, Vite, TypeScript, Tailwind
-- Validation: pytest, hypothesis, mypy, ruff
-- Observability: Prometheus metrics, health/readiness endpoints, adapter status surface
-
-## Run Locally
-
-Backend:
-
-```bash
-python3 -m pip install -e .[dev]
-python3 -m arb.main
+```text
+Exchange WebSockets
+        |
+        v
+Exchange adapters  -- validate continuity and normalize messages
+        |
+        v
+OrderBookManager   -- maintain L2 books and reject untrusted/stale state
+        |
+        v
+ArbitrageDetector  -- compare eligible top-of-book prices
+        |
+        +----------> SQLite opportunity history
+        |
+        +----------> FastAPI WebSocket ----------> React dashboard
 ```
 
-Frontend:
+Recovery stays inside each exchange adapter because sequence semantics differ:
+Binance.US aligns buffered deltas with a REST snapshot, Coinbase waits for a new
+Level 2 stream snapshot, and Gemini reconnects for a new differential-depth snapshot.
+The shared order-book module only accepts a continuous normalized stream.
+
+## Run locally
+
+Prerequisites:
+
+- Python 3.11 or newer
+- Node.js 20 or newer
+- npm
+- [uv](https://docs.astral.sh/uv/) for locked Python environments
+
+From the repository root, create an environment and start the backend.
+
+PowerShell:
+
+```powershell
+uv sync --locked --extra dev
+uv run python -m arb.main
+```
+
+macOS/Linux:
 
 ```bash
+uv sync --locked --extra dev
+uv run python -m arb.main
+```
+
+The API listens on `http://127.0.0.1:8000` by default. In a second terminal,
+start the dashboard:
+
+PowerShell:
+
+```powershell
 cd dashboard
-npm install
+npm ci
 npm run dev
 ```
 
-Verification:
+macOS/Linux:
 
 ```bash
-pytest -q
-mypy --strict server/arb
-ruff check server
-cd dashboard && npm run lint && npm run typecheck && npm run build
-python3 server/scripts/benchmark.py
-python3 server/scripts/bench_e2e.py --iterations 10000
-python3 server/scripts/replay.py server/tests/fixtures/recorded
+cd dashboard
+npm ci
+npm run dev
 ```
 
-## Design Tradeoffs
+Open `http://localhost:5173`. During development, Vite proxies REST and WebSocket
+traffic to the local backend. Set `VITE_API_URL` when the backend uses another origin;
+[`dashboard/.env.example`](dashboard/.env.example) shows the expected format.
 
-- SQLite over Postgres: zero-ops persistence was the right choice for a single-process portfolio system with batched writes.
-- One process over distributed services: the project goal is correctness, observability, and measurable performance, not deployment complexity.
-- asyncio over threads: exchange feeds, persistence flushing, broadcasting, and reconciliation are naturally event-driven.
-- Exchange-specific recovery: Binance aligns buffered deltas with a REST snapshot, Coinbase waits for a new Level 2 stream snapshot, and Gemini reconnects for a new `snapshot=-1` depth frame. Protocol rules stay in each adapter while consumers share one eligibility rule.
+## Configuration
 
-## Validation Status
+Runtime settings live in [`config.toml`](config.toml):
 
-Implemented and verified:
-- end-to-end synthetic benchmark harness writing to `benchmarks/results.json`
-- property-based order book tests
-- replay regression tests using recorded fixtures
-- exchange-specific gap detection and trusted snapshot recovery
-- snapshot reconciliation job
-- Prometheus metrics plus `/healthz`, `/readyz`, `/metrics`, and `/api/adapters`
-- CI workflow, mypy strict, ruff, frontend lint/typecheck, and pre-commit config
+| Section | Controls |
+| --- | --- |
+| `detector` | Minimum spread percentage that emits an opportunity |
+| `exchanges` | Exchange-native symbols to subscribe to |
+| `server` | Bind address, port, and SQLite path |
+| `persistence` | Batch size, flush interval, and bounded queue size |
+| `order_books` | Maximum accepted age for otherwise trusted books |
 
-Still operational rather than code-complete:
-- a true 24h+ soak run with captured artifact logs
-- a recorded live dashboard GIF / video walkthrough
-- real exchange traffic captures longer than the bundled regression fixtures
+Environment variables used by the application:
 
-## What I’d Build Next
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `ARB_LOG_LEVEL` | Backend log level | `INFO` |
+| `VITE_API_URL` | REST origin used by the dashboard; its scheme is converted for WebSockets | Local Vite proxy in development; hosted API in production |
 
-- 24h soak-run artifact with reconnect, memory, and gap-rate reporting
-- fee-aware net-profit estimation toggle
-- spread-over-time chart per pair
-- deeper exchange-specific reconciliation for Binance and Coinbase sequence semantics
+Restart the backend after changing `config.toml`.
+
+## Useful interfaces
+
+| Interface | Purpose |
+| --- | --- |
+| `GET /healthz` | Process liveness |
+| `GET /readyz` | Adapter, book, and background-task readiness |
+| `GET /api/adapters` | Connection age, reconnects, gaps, and last errors |
+| `GET /api/book-status` | Eligibility and freshness for every configured book |
+| `GET /api/opportunities/recent?limit=50` | Recent theoretical opportunities (`limit`: 1–500) |
+| `GET /api/stats?window=1h` | Basic opportunity statistics |
+| `GET /api/system/overview` | Uptime and all-time peaks |
+| `GET /api/system/stats?window=1h` | Windowed aggregate statistics |
+| `GET /api/system/timeseries?window=1h&bucket_seconds=60` | Chart buckets (`bucket_seconds`: 1–86,400) |
+| `GET /metrics` | Prometheus exposition |
+| `WS /ws/live` | Initial state followed by live book/status/opportunity messages |
+
+FastAPI's interactive schema is available at `http://127.0.0.1:8000/docs` while
+the backend is running. Nanosecond timestamps are serialized as decimal strings so
+JavaScript clients do not lose integer precision.
+
+## Verify a change
+
+Run backend checks from the repository root:
+
+```powershell
+uv run pytest -q server/tests
+uv run mypy --strict server/arb
+uv run ruff check server
+uv run ruff format --check server
+```
+
+Install or run the same cross-platform checks as Git hooks:
+
+```powershell
+uv run pre-commit install
+uv run pre-commit run --all-files
+```
+
+Run frontend checks from `dashboard/`:
+
+```bash
+npm run typecheck
+npm run lint
+npm run build
+```
+
+The repository currently has 148 passing backend tests. CI runs tests with coverage,
+strict type checking, linting, and the production dashboard build.
+
+## Benchmarks and replay
+
+The committed synthetic results are hardware-specific and do not represent live
+exchange or network performance.
+
+| Path | p50 | p95 | Throughput |
+| --- | ---: | ---: | ---: |
+| Detector only | 3.42 us | 3.88 us | 16,454,491 evaluations/min |
+| Synthetic ingest-to-detection | 16.00 us | 17.33 us | 1,920,581 events/min |
+
+Reproduce them from the repository root:
+
+```powershell
+python server/scripts/benchmark.py
+python server/scripts/bench_e2e.py --iterations 10000
+python server/scripts/replay.py server/tests/fixtures/recorded
+```
+
+See [`BENCHMARKS.md`](BENCHMARKS.md) for methodology and
+[`benchmarks/results.json`](benchmarks/results.json) for the committed raw results.
+The live observer is documented there as well; the repository includes short smoke
+runs, but not yet the planned 24-hour soak.
+
+## Repository map
+
+```text
+server/arb/          Backend modules
+  adapters/          Gemini, Coinbase, and Binance.US feed adapters
+  api.py             HTTP/WebSocket interfaces and live broadcasting
+  orderbook.py       L2 state and the canonical eligibility decision
+  detector.py        Cross-exchange spread calculation
+  persistence.py     Batched SQLite writes and statistics queries
+  reconcile.py       Periodic live-versus-REST comparison
+  main.py            Application wiring and task supervision
+server/tests/        Unit, property, replay, and pipeline tests
+server/scripts/      Benchmark, replay, capture, and soak utilities
+dashboard/src/       React/TypeScript dashboard
+benchmarks/          Machine-readable results and live-run artifacts
+docs/RESYNC.md       Current recovery design decision
+docs/VALIDATION.md   Verified behavior and remaining validation evidence
+```
+
+## Scope and limitations
+
+Every reported opportunity and profit value is theoretical. Calculations exclude
+trading and withdrawal fees, slippage, transfer latency, inventory constraints,
+partial fills, rate limits, and execution risk. The detector uses only top-of-book
+liquidity and is an observability project, not an execution engine or trading system.
+
+The largest remaining validation gap is a documented 24-hour live soak covering
+memory stability, reconnect recovery, sequence gaps, and the 60-second freshness
+threshold.

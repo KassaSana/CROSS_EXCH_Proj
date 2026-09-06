@@ -54,6 +54,9 @@ Notes:
 
 Raw persisted results live in [benchmarks/results.json](benchmarks/results.json).
 
+The current verification summary and remaining live-soak gap are tracked in
+[docs/VALIDATION.md](docs/VALIDATION.md).
+
 ## 3. Live Soak Observer
 
 Start the backend, note its process ID, then run:
