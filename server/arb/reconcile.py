@@ -73,6 +73,8 @@ class SnapshotReconciler:
     def _side_mismatch_pct(
         self, live_levels: list[PriceLevel], snapshot_levels: list[PriceLevel]
     ) -> Decimal:
+        if len(live_levels) != len(snapshot_levels):
+            return Decimal("100")
         comparisons = zip(live_levels, snapshot_levels)
         mismatch_pct = Decimal("0")
         for live_level, snapshot_level in comparisons:
