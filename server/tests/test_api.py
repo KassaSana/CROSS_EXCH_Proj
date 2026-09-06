@@ -74,6 +74,33 @@ def test_healthz_is_alive() -> None:
     assert response.json() == {"status": "ok"}
 
 
+@pytest.mark.parametrize("limit", [0, 501])
+def test_recent_endpoint_rejects_out_of_range_limits(limit: int) -> None:
+    client = TestClient(
+        create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster())
+    )
+
+    assert client.get(f"/api/opportunities/recent?limit={limit}").status_code == 422
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/stats?window=forever",
+        "/api/system/stats?window=forever",
+        "/api/system/timeseries?window=forever",
+        "/api/system/timeseries?bucket_seconds=0",
+        "/api/system/timeseries?bucket_seconds=86401",
+    ],
+)
+def test_statistics_endpoints_reject_invalid_query_values(path: str) -> None:
+    client = TestClient(
+        create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster())
+    )
+
+    assert client.get(path).status_code == 422
+
+
 def test_metrics_endpoint_exposes_prometheus_payload() -> None:
     client = TestClient(
         create_app(OpportunityStore(":memory:"), OrderBookManager(), LiveBroadcaster())
