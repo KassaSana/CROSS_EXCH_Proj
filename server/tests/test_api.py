@@ -63,6 +63,7 @@ async def test_recent_endpoint_returns_saved_rows(tmp_path: Path) -> None:
     response = client.get("/api/opportunities/recent?limit=10")
     assert response.status_code == 200
     assert response.json()[0]["pair"] == "BTC-USD"
+    assert response.json()[0]["timestamp_ns"] == "1"
 
 
 def test_healthz_is_alive() -> None:
@@ -437,7 +438,7 @@ def test_websocket_connection_restores_only_current_eligible_books() -> None:
             "best_ask_price": "101",
             "best_ask_size": "2",
             "sequence": 4,
-            "timestamp_ns": 99,
+            "timestamp_ns": "99",
         }
     ]
     assert [status["eligible"] for status in snapshot["payload"]["statuses"]] == [True, False]
@@ -517,7 +518,7 @@ async def test_system_overview_reports_uptime_and_started_at(tmp_path: Path) -> 
     response = client.get("/api/system/overview")
     assert response.status_code == 200
     body = response.json()
-    assert body["started_at_ns"] == started_at_holder[0]
+    assert body["started_at_ns"] == str(started_at_holder[0])
     assert body["uptime_seconds"] >= 5
     assert body["all_time_count"] == 0
     assert body["all_time_peak_minute"] is None
@@ -575,6 +576,7 @@ async def test_system_timeseries_endpoint_returns_buckets(tmp_path: Path) -> Non
     assert body["window"] == "1h"
     assert body["bucket_seconds"] == 60
     assert len(body["points"]) >= 1
+    assert isinstance(body["points"][0]["bucket_start_ns"], str)
 
 
 @pytest.mark.asyncio
@@ -598,7 +600,7 @@ async def test_system_reset_zeros_uptime_without_clearing_history(tmp_path: Path
     assert after["uptime_seconds"] < 5
     assert after["started_at_ns"] > before["started_at_ns"]
     # Holder is mutated so subsequent endpoints see the new start.
-    assert started_at_holder[0] == after["started_at_ns"]
+    assert str(started_at_holder[0]) == after["started_at_ns"]
 
 
 @pytest.mark.asyncio

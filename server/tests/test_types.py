@@ -20,7 +20,7 @@ def test_top_of_book_payload_stringifies_decimals() -> None:
     assert payload["exchange"] == "gemini"
     assert payload["pair"] == "BTC-USD"
     assert payload["sequence"] == 42
-    assert payload["timestamp_ns"] == 999
+    assert payload["timestamp_ns"] == "999"
     for key in ("best_bid_price", "best_bid_size", "best_ask_price", "best_ask_size"):
         assert isinstance(payload[key], str)
     # Exact string round-trip — no float drift.
@@ -41,7 +41,7 @@ def test_arbitrage_opportunity_payload_round_trips_decimal_strings() -> None:
     )
     payload = opp.as_payload()
     assert payload["pair"] == "ETH-USD"
-    assert payload["timestamp_ns"] == 1
+    assert payload["timestamp_ns"] == "1"
     assert payload["buy_price"] == "2000.123"
     assert payload["theoretical_profit_usd"] == "2.583250"
     # All Decimal fields must be strings; non-Decimal scalars unchanged.

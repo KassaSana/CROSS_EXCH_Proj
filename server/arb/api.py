@@ -38,6 +38,12 @@ def window_to_ns(window: str) -> int:
     return values.get(window, values["1h"])
 
 
+def serialize_peak(peak: dict[str, int] | None) -> dict[str, int | str] | None:
+    if peak is None:
+        return None
+    return {**peak, "minute_start_ns": str(peak["minute_start_ns"])}
+
+
 READINESS_WINDOW_NS = 30_000_000_000
 
 
@@ -149,8 +155,9 @@ def create_app(
     @app.get("/api/opportunities/recent")
     async def recent_opportunities(
         limit: Annotated[int, Query(ge=1, le=500)] = 100,
-    ) -> list[dict[str, str | int]]:
-        return await store.recent(limit=limit)
+    ) -> list[dict[str, object]]:
+        rows = await store.recent(limit=limit)
+        return [{**row, "timestamp_ns": str(row["timestamp_ns"])} for row in rows]
 
     @app.get("/api/stats")
     async def stats(window: Window = "1h") -> dict[str, str | int]:
@@ -160,11 +167,11 @@ def create_app(
     async def system_overview() -> dict[str, object]:
         all_time = await store.extended_stats(window_ns=None)
         return {
-            "started_at_ns": started_at[0],
+            "started_at_ns": str(started_at[0]),
             "uptime_seconds": max(0, (time.time_ns() - started_at[0]) // 1_000_000_000),
             "all_time_count": all_time["count"],
             "all_time_max_spread_pct": all_time["max_spread_pct"],
-            "all_time_peak_minute": await store.peak_minute(window_ns=None),
+            "all_time_peak_minute": serialize_peak(await store.peak_minute(window_ns=None)),
         }
 
     @app.get("/api/system/stats")
@@ -172,7 +179,7 @@ def create_app(
         window_ns = window_to_ns(window)
         extended = await store.extended_stats(window_ns=window_ns)
         peak = await store.peak_minute(window_ns=window_ns)
-        return {"window": window, **extended, "peak_minute": peak}
+        return {"window": window, **extended, "peak_minute": serialize_peak(peak)}
 
     @app.get("/api/system/timeseries")
     async def system_timeseries(
@@ -181,12 +188,19 @@ def create_app(
     ) -> dict[str, object]:
         window_ns = window_to_ns(window)
         points = await store.timeseries(window_ns=window_ns, bucket_seconds=bucket_seconds)
-        return {"window": window, "bucket_seconds": bucket_seconds, "points": points}
+        serialized_points = [
+            {**point, "bucket_start_ns": str(point["bucket_start_ns"])} for point in points
+        ]
+        return {
+            "window": window,
+            "bucket_seconds": bucket_seconds,
+            "points": serialized_points,
+        }
 
     @app.post("/api/system/reset")
-    async def system_reset() -> dict[str, int]:
+    async def system_reset() -> dict[str, int | str]:
         started_at[0] = time.time_ns()
-        return {"started_at_ns": started_at[0], "uptime_seconds": 0}
+        return {"started_at_ns": str(started_at[0]), "uptime_seconds": 0}
 
     @app.get("/api/pairs")
     async def pairs() -> list[dict[str, str]]:

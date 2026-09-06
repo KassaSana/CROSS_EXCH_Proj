@@ -57,7 +57,7 @@ class TopOfBook:
             "best_ask_price": str(self.best_ask_price),
             "best_ask_size": str(self.best_ask_size),
             "sequence": self.sequence,
-            "timestamp_ns": self.timestamp_ns,
+            "timestamp_ns": str(self.timestamp_ns),
         }
 
 
@@ -76,7 +76,7 @@ class ArbitrageOpportunity:
     def as_payload(self) -> dict[str, object]:
         payload = asdict(self)
         return {
-            key: str(value) if isinstance(value, Decimal) else value
+            key: str(value) if isinstance(value, Decimal) or key == "timestamp_ns" else value
             for key, value in payload.items()
         }
 

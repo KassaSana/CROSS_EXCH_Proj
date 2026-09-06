@@ -20,7 +20,9 @@ function formatUsd(value: string | undefined): string {
 
 function formatPeak(stats: WindowStats | null): { value: string; sub: string } {
   if (!stats || !stats.peak_minute) return { value: "—", sub: "Insufficient data" };
-  const date = new Date(Math.floor(stats.peak_minute.minute_start_ns / 1_000_000));
+  const date = new Date(
+    Number(BigInt(stats.peak_minute.minute_start_ns) / 1_000_000n),
+  );
   return {
     value: `${stats.peak_minute.count} opps`,
     sub: date.toLocaleString(),

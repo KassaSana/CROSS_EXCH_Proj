@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 type Props = {
-  startedAtNs: number | null;
+  startedAtNs: string | null;
   onReset: () => void;
 };
 
@@ -25,10 +25,12 @@ export function UptimeCard({ startedAtNs, onReset }: Props) {
     return () => window.clearInterval(id);
   }, []);
 
+  const startedAtMs =
+    startedAtNs === null ? null : Number(BigInt(startedAtNs) / 1_000_000n);
   const uptimeSeconds =
-    startedAtNs === null ? 0 : Math.max(0, Math.floor((now * 1_000_000 - startedAtNs) / 1_000_000_000));
+    startedAtMs === null ? 0 : Math.max(0, Math.floor((now - startedAtMs) / 1_000));
   const startedDisplay =
-    startedAtNs === null ? "—" : new Date(Math.floor(startedAtNs / 1_000_000)).toLocaleString();
+    startedAtMs === null ? "—" : new Date(startedAtMs).toLocaleString();
 
   return (
     <section className="rounded-[2rem] border border-stone-300 bg-gradient-to-r from-white to-amber-50 p-8 shadow-sm">
