@@ -236,14 +236,13 @@ async def run_pipeline() -> None:
         for task in adapter_tasks:
             task.cancel()
         reconcile_task.cancel()
-        await store.close()
-        persistence_task.cancel()
         await asyncio.gather(
             *adapter_tasks,
             reconcile_task,
-            persistence_task,
             return_exceptions=True,
         )
+        await store.close()
+        await persistence_task
 
 
 if __name__ == "__main__":

@@ -43,8 +43,10 @@ class OpportunityStore:
         self.db_path = db_path
         self.batch_size = batch_size
         self.flush_interval_seconds = flush_interval_seconds
-        self._queue: asyncio.Queue[ArbitrageOpportunity] = asyncio.Queue(maxsize=queue_maxsize)
-        self._stop_event = asyncio.Event()
+        self._queue: asyncio.Queue[ArbitrageOpportunity | None] = asyncio.Queue(
+            maxsize=queue_maxsize
+        )
+        self._closed = False
 
     async def initialize(self) -> None:
         async with aiosqlite.connect(self.db_path) as db:
@@ -53,6 +55,8 @@ class OpportunityStore:
             await db.commit()
 
     async def enqueue(self, opportunity: ArbitrageOpportunity) -> bool:
+        if self._closed:
+            return False
         try:
             self._queue.put_nowait(opportunity)
         except asyncio.QueueFull:
@@ -62,11 +66,13 @@ class OpportunityStore:
 
     async def run(self) -> None:
         batch: list[ArbitrageOpportunity] = []
-        while not self._stop_event.is_set():
+        while True:
             try:
                 item = await asyncio.wait_for(
                     self._queue.get(), timeout=self.flush_interval_seconds
                 )
+                if item is None:
+                    break
                 batch.append(item)
                 if len(batch) >= self.batch_size:
                     await self._flush(batch)
@@ -80,7 +86,10 @@ class OpportunityStore:
             await self._flush(batch)
 
     async def close(self) -> None:
-        self._stop_event.set()
+        if self._closed:
+            return
+        self._closed = True
+        await self._queue.put(None)
 
     async def recent(self, limit: int = 100) -> list[dict[str, Any]]:
         query = """
