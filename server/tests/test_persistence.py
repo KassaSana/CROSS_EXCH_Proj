@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from arb.persistence import OpportunityStore
 from arb.types import ArbitrageOpportunity
+from conftest import wait_for_rows
 
 
 def make_opp(
@@ -42,7 +43,7 @@ async def test_batched_flush_by_size_writes_all_rows(tmp_path: Path) -> None:
     for index in range(3):
         await store.enqueue(make_opp(timestamp_ns=index + 1))
     # Allow batch-by-size flush to complete (no need to wait the 5s interval).
-    await asyncio.sleep(0.1)
+    await wait_for_rows(store, 3)
     rows = await store.recent(limit=10)
     assert len(rows) == 3
     await store.close()
@@ -58,7 +59,7 @@ async def test_flush_interval_drains_partial_batch(tmp_path: Path) -> None:
     runner = asyncio.create_task(store.run())
     await store.enqueue(make_opp(timestamp_ns=1))
     # Far below batch_size, but interval should fire.
-    await asyncio.sleep(0.2)
+    await wait_for_rows(store, 1)
     rows = await store.recent(limit=10)
     assert len(rows) == 1
     await store.close()
@@ -117,7 +118,7 @@ async def test_decimal_round_trip_preserves_string_form(tmp_path: Path) -> None:
     await store.initialize()
     runner = asyncio.create_task(store.run())
     await store.enqueue(make_opp(timestamp_ns=10))
-    await asyncio.sleep(0.1)
+    await wait_for_rows(store, 1)
     [row] = await store.recent(limit=10)
     # Stored as TEXT — exact round trip with no float drift.
     assert row["buy_price"] == "100.123456789"
@@ -135,7 +136,7 @@ async def test_recent_orders_descending_by_timestamp(tmp_path: Path) -> None:
     runner = asyncio.create_task(store.run())
     for ts in (10, 30, 20):
         await store.enqueue(make_opp(timestamp_ns=ts))
-    await asyncio.sleep(0.2)
+    await wait_for_rows(store, 3)
     rows = await store.recent(limit=10)
     assert [row["timestamp_ns"] for row in rows] == [30, 20, 10]
     await store.close()
@@ -154,7 +155,7 @@ async def test_stats_window_filters_out_old_rows(tmp_path: Path) -> None:
     await store.enqueue(
         make_opp(timestamp_ns=now_ns - 10_000_000_000_000, spread="9", profit="100")
     )  # ~3h old
-    await asyncio.sleep(0.2)
+    await wait_for_rows(store, 2)
 
     one_hour_ns = 3_600_000_000_000
     stats = await store.stats(window_ns=one_hour_ns)
@@ -198,7 +199,7 @@ async def test_extended_stats_aggregates_within_window(tmp_path: Path) -> None:
     await store.enqueue(
         make_opp(now_ns - 10_000_000_000_000, spread="99", profit="999", pair="ETH-USD")
     )
-    await asyncio.sleep(0.2)
+    await wait_for_rows(store, 5)
 
     stats = await store.extended_stats(window_ns=3_600_000_000_000)
     assert stats["count"] == 4
@@ -219,7 +220,7 @@ async def test_extended_stats_all_time_with_window_none(tmp_path: Path) -> None:
     runner = asyncio.create_task(store.run())
     await store.enqueue(make_opp(timestamp_ns=1, spread="2", pair="BTC-USD"))
     await store.enqueue(make_opp(timestamp_ns=2, spread="4", pair="BTC-USD"))
-    await asyncio.sleep(0.2)
+    await wait_for_rows(store, 2)
 
     stats = await store.extended_stats(window_ns=None)
     assert stats["count"] == 2
@@ -255,7 +256,7 @@ async def test_peak_minute_returns_busiest_bucket(tmp_path: Path) -> None:
         await store.enqueue(make_opp(timestamp_ns=base + offset))
     for offset in range(5):
         await store.enqueue(make_opp(timestamp_ns=base + minute_ns + offset))
-    await asyncio.sleep(0.2)
+    await wait_for_rows(store, 7)
 
     peak = await store.peak_minute(window_ns=3_600_000_000_000)
     assert peak is not None
@@ -286,7 +287,7 @@ async def test_timeseries_buckets_and_orders_ascending(tmp_path: Path) -> None:
     await store.enqueue(make_opp(timestamp_ns=base, spread="1"))
     await store.enqueue(make_opp(timestamp_ns=base + 1, spread="3"))
     await store.enqueue(make_opp(timestamp_ns=base + bucket_ns, spread="2"))
-    await asyncio.sleep(0.2)
+    await wait_for_rows(store, 3)
 
     points = await store.timeseries(window_ns=3_600_000_000_000, bucket_seconds=bucket_seconds)
     assert len(points) == 2

@@ -10,6 +10,7 @@ from arb.api import LiveBroadcaster, create_app
 from arb.orderbook import OrderBookManager
 from arb.persistence import OpportunityStore
 from arb.types import ArbitrageOpportunity, EventKind, LiveMessage, MarketEvent, PriceLevel
+from conftest import wait_for_rows
 from fastapi.testclient import TestClient
 
 
@@ -539,7 +540,7 @@ async def test_system_stats_endpoint_returns_extended_aggregates(tmp_path: Path)
     await store.enqueue(
         _seed_opp(store, timestamp_ns=now - 2, spread_pct=Decimal("1"), pair="ETH-USD")
     )
-    await asyncio.sleep(0.2)
+    await wait_for_rows(store, 3)
     await store.close()
     runner.cancel()
 
@@ -565,7 +566,7 @@ async def test_system_timeseries_endpoint_returns_buckets(tmp_path: Path) -> Non
     base = (time.time_ns() // bucket_ns) * bucket_ns
     await store.enqueue(_seed_opp(store, timestamp_ns=base))
     await store.enqueue(_seed_opp(store, timestamp_ns=base + bucket_ns))
-    await asyncio.sleep(0.2)
+    await wait_for_rows(store, 2)
     await store.close()
     runner.cancel()
 
