@@ -66,6 +66,39 @@ async def test_flush_interval_drains_partial_batch(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_close_drains_every_accepted_opportunity(tmp_path: Path) -> None:
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"),
+        batch_size=500,
+        flush_interval_seconds=60.0,
+        queue_maxsize=10,
+    )
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+
+    for timestamp_ns in range(1, 6):
+        assert await store.enqueue(make_opp(timestamp_ns)) is True
+
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
+
+    rows = await store.recent(limit=10)
+    assert [row["timestamp_ns"] for row in rows] == [5, 4, 3, 2, 1]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_rejects_new_work_after_close(tmp_path: Path) -> None:
+    store = OpportunityStore(str(tmp_path / "db.sqlite3"))
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+
+    await store.close()
+    await runner
+
+    assert await store.enqueue(make_opp(1)) is False
+
+
+@pytest.mark.asyncio
 async def test_queue_full_returns_false_and_increments_drop_metric(tmp_path: Path) -> None:
     from arb.metrics import persistence_queue_drops_total
 
