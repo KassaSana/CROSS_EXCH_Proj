@@ -1,122 +1,65 @@
-# Cross-Exchange Arbitrage Detector
+# ArbSync repository guidance
 
-Real-time crypto arbitrage detection system. Backend ingests live order books from Gemini, Coinbase, and Binance over WebSocket, maintains in-memory L2 books, runs a detector, persists opportunities to SQLite, and streams updates to a React dashboard.
+ArbSync ingests public Gemini, Coinbase, and Binance.US order books, maintains
+trusted in-memory L2 books, detects theoretical cross-exchange opportunities, stores
+them in SQLite, and streams state to a React dashboard.
 
-## Tech stack
+Read [`AGENTS.md`](AGENTS.md) for repository-wide contribution and commit rules.
 
-- **Backend**: Python 3.11, asyncio, FastAPI, websockets, aiosqlite, structlog, httpx
-- **Frontend**: React 18, Vite, TypeScript, Tailwind, react-router-dom 6, recharts
-- **Tests**: pytest, hypothesis, mypy strict, ruff
+## Layout
 
-## Repo layout
-
-```
-server/arb/              # backend package
-  adapters/              # one file per exchange (binance, coinbase, gemini) + base
-  api.py                 # FastAPI routes + WebSocket broadcaster
-  detector.py            # arbitrage detector logic
-  orderbook.py           # in-memory L2 book manager
-  persistence.py         # batched async SQLite writer + queries
-  reconcile.py           # periodic snapshot reconciliation
-  metrics.py             # Prometheus counters/histograms
-  main.py                # entry point — wires everything together
-  config.py / types.py
-server/tests/            # pytest suite, mirrors server/arb/ layout
-dashboard/src/
-  pages/                 # Dashboard, Statistics
-  components/            # presentational components
-  hooks/                 # useWebSocket
-  api/client.ts          # all fetch + types
-docs/nxtproject.md       # order book trust & recovery plan + live status tracker
-config.toml              # exchange pairs, detector threshold, server config
-arb.sqlite3              # local dev DB (gitignored)
+```text
+server/arb/          Backend package
+server/arb/adapters/ Exchange-specific protocol and recovery logic
+server/tests/        Backend tests
+server/scripts/      Benchmark, replay, capture, and soak tools
+dashboard/src/       React/TypeScript dashboard
+docs/RESYNC.md       Recovery design decision
+docs/VALIDATION.md   Current verification status and remaining evidence
+BENCHMARKS.md        Benchmark and soak methodology
+config.toml          Runtime configuration
 ```
 
-## Work in progress
+## Architectural invariants
 
-`docs/nxtproject.md` is the state of record for the order book trust and
-recovery work — the rule that a book is eligible for detection only when we know
-how it was initialized, that its updates are continuous, and that its data is
-recent enough. It tags every item DONE / IN PROGRESS / NOT STARTED with the file
-or commit that proves it, and its "Next up" section says where to resume.
+- Adapters own exchange-specific sequence validation and recovery.
+- `OrderBookManager` owns the canonical eligibility decision shared by detection,
+  readiness, metrics, and dashboard state.
+- A disconnected, uninitialized, discontinuous, stale, incomplete, or crossed book
+  must not contribute to detection.
+- Persistence and per-client WebSocket delivery remain bounded and must not block
+  market-data ingestion.
+- SQLite stores opportunities, not order books.
+- Decimal values are stored and serialized without converting through binary floats.
+- Opportunities are theoretical and exclude fees, slippage, latency, inventory, and
+  execution risk.
 
-**Read it before touching the adapters, `orderbook.py`, the broadcaster, or the
-dashboard WebSocket hook**, and update its status table in the same commit as the
-code change so the tracker never drifts from the tree.
+See [`docs/RESYNC.md`](docs/RESYNC.md) before changing adapter recovery or normalized
+sequence behavior.
 
-Currently done: exchange-specific continuity for Binance, Coinbase, and Gemini;
-explicit book eligibility; dashboard reconnect/state restore; bounded client
-queues; and background-task supervision. Next: live soak validation and age
-threshold tuning.
+## Run and verify
 
-## Run locally
+From the repository root:
+
+```powershell
+uv run pytest -q server/tests
+uv run mypy --strict server/arb
+uv run ruff check server
+uv run ruff format --check server
+uv run python -m arb.main
+```
+
+From `dashboard/`:
 
 ```bash
-# Backend (in repo root)
-python3 -m pip install -e .[dev]   # one-time
-python3 -m arb.main                # serves on :8000
-
-# Frontend (in dashboard/)
-npm install                        # one-time
-npm run dev                        # serves on :5173
-```
-
-Open http://localhost:5173. Frontend talks to backend at `localhost:8000` in dev (vite proxy), and the deployed Render URL in prod.
-
-## Verification commands
-
-Run these before pushing:
-
-```bash
-# Backend
-python3 -m pytest server/tests -q
-python3 -m mypy --strict server/arb
-python3 -m ruff check server
-
-# Frontend (in dashboard/)
 npm run typecheck
 npm run lint
 npm run build
+npm run dev
 ```
 
-`npm run lint` may crash with `util.styleText is not a function` due to a Node/ESLint formatter incompatibility on macOS — workaround is `npx eslint src --ext .ts,.tsx -f json`.
+Use small batch sizes and short flush intervals in tests. Tests that open SQLite more
+than once should use a file under pytest's `tmp_path`, not `:memory:`.
 
-## Deployment
-
-Auto-deploy on push to `main`:
-- **Backend** → Render: https://arb-detector-api.onrender.com (config in Render dashboard, no `render.yaml` in repo)
-- **Frontend** → Vercel: https://cross-exch-proj.vercel.app (config via `dashboard/vercel.json` for SPA rewrites)
-
-Render's free tier sleeps after 15 min of inactivity — when sleeping, the backend can't maintain WebSocket connections to exchanges, so live data freezes. Upgrade or accept this tradeoff.
-
-## Key endpoints
-
-- `GET /healthz`, `GET /readyz` — liveness/readiness
-- `GET /api/adapters` — per-exchange adapter status (connected, last message age, reconnects)
-- `GET /api/opportunities/recent?limit=N` — recent opportunities
-- `GET /api/stats?window=1h|4h|1d|1w` — legacy stats
-- `GET /api/system/overview` — uptime + all-time peaks
-- `GET /api/system/stats?window=...` — windowed stats with top pair, peak minute
-- `GET /api/system/timeseries?window=...&bucket_seconds=...` — time-bucketed counts
-- `POST /api/system/reset` — zero the uptime counter (does not clear data)
-- `GET /metrics` — Prometheus
-- `WS /ws/live` — live top-of-book + opportunity stream
-
-## Architectural conventions
-
-- **Adapters**: each exchange has a class extending `ExchangeAdapter` (server/arb/adapters/base.py). The base class handles reconnect-with-backoff in `connect()`. Subclasses override `subscribe`, `parse_message`, `fetch_snapshot`, and optionally `reset_state`. Binance rebuilds from a REST snapshot aligned with buffered deltas; Coinbase waits for a new Level 2 stream snapshot; Gemini reconnects with `snapshot=-1` and treats the first differential-depth frame per pair as its replacement snapshot.
-- **Persistence is batched**: opportunities are enqueued; a background task flushes by size (500) or interval (1s). Don't block the detection path with sync writes.
-- **Books are in-memory only**: `OrderBookManager` holds L2 books. SQLite stores opportunities, not books.
-- **Tests use file-based SQLite via `tmp_path`**: `:memory:` SQLite gives a fresh DB per `aiosqlite.connect()`, so tests that hit the table need `tmp_path / "x.sqlite3"`.
-
-## Known quirks
-
-- **The old Coinbase low-volume concern is retired.** A 2026-09-05 live smoke observed 29,001 Coinbase events in five minutes versus 2,042 Gemini and 1,760 Binance events, with zero gaps or reconnects. See `benchmarks/soak_smoke_5m_2026-09-05.md`.
-- **MATIC was removed** from `config.toml` because Polygon rebranded to POL in late 2024 and the major exchanges delisted MATIC. Adding any new pair requires checking listing status on all three venues.
-- **All detected opportunities are theoretical** — no fees, slippage, transfer time, or inventory constraints are accounted for. This is a detection/observability system, not an execution engine.
-
-## Working style preferences
-
-- Don't add backwards-compat shims for code that doesn't exist yet. Prefer simplicity over hypothetical future flexibility.
-- Tests should run fast — use small batch sizes and short flush intervals in fixtures.
-- When making fullstack changes, run the backend verification before touching frontend, and finish with the full battery (pytest + mypy + ruff + typecheck + lint + build) before declaring done.
+Update [`docs/VALIDATION.md`](docs/VALIDATION.md) only when verification evidence or
+the remaining validation gap materially changes.
