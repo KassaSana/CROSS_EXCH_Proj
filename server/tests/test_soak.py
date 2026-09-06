@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from soak import SoakReport, parse_event_counts, process_rss_bytes
+from soak import SoakReport, parse_event_counts, process_rss_bytes, write_report
 
 
 def test_soak_report_tracks_recovery_and_counters() -> None:
@@ -81,3 +81,27 @@ arb_book_eligible{exchange="gemini",pair="BTC-USD"} 1.0
 """
 
     assert parse_event_counts(metrics) == {"gemini": 123, "coinbase": 42}
+
+
+def test_markdown_labels_an_unfinished_run_as_in_progress() -> None:
+    report = SoakReport("2026-09-05T00:00:00+00:00", 86_400, 60)
+
+    assert "- Status: `in progress`" in report.markdown()
+
+    report.completed = True
+
+    assert "- Status: `complete`" in report.markdown()
+
+
+def test_write_report_creates_missing_directories(tmp_path: Path) -> None:
+    report = SoakReport("2026-09-05T00:00:00+00:00", 86_400, 60)
+    output = tmp_path / "nested" / "soak.md"
+
+    write_report(output, report)
+
+    assert output.read_text(encoding="utf-8").startswith("# Live soak report - 2026-09-05")
+
+    report.completed = True
+    write_report(output, report)
+
+    assert "- Status: `complete`" in output.read_text(encoding="utf-8")

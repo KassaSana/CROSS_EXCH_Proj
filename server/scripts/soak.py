@@ -140,6 +140,7 @@ class SoakReport:
     background_failures: dict[str, str] = field(default_factory=dict)
     ended_at: str | None = None
     actual_duration_seconds: float = 0
+    completed: bool = False
 
     def observe(
         self,
@@ -184,6 +185,7 @@ class SoakReport:
             f"- Requested duration: `{self.duration_requested_seconds:.1f}s`",
             f"- Actual duration: `{self.actual_duration_seconds:.1f}s`",
             f"- Sample interval: `{self.sample_interval_seconds:.1f}s`",
+            f"- Status: `{'complete' if self.completed else 'in progress'}`",
             f"- Successful samples: `{self.samples}`",
             f"- Ready samples: `{self.ready_samples}/{self.samples}` ({ready_pct:.1f}%)",
             f"- HTTP failures: `{len(self.http_failures)}`",
@@ -262,6 +264,11 @@ class SoakReport:
         return "\n".join(lines)
 
 
+def write_report(output: Path, report: SoakReport) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(report.markdown(), encoding="utf-8")
+
+
 async def fetch_json(client: httpx.AsyncClient, path: str) -> dict[str, Any] | list[dict[str, Any]]:
     response = await client.get(path)
     if path != "/readyz":
@@ -291,6 +298,7 @@ async def run_soak(
     duration_seconds: float,
     sample_interval_seconds: float,
     pid: int | None,
+    output: Path,
 ) -> SoakReport:
     report = SoakReport(utc_now(), duration_seconds, sample_interval_seconds)
     loop = asyncio.get_running_loop()
@@ -321,6 +329,10 @@ async def run_soak(
             except (httpx.HTTPError, KeyError, TypeError, ValueError, AssertionError) as exc:
                 report.http_failures.append(f"{utc_now()}: {type(exc).__name__}: {exc}")
 
+            report.actual_duration_seconds = loop.time() - started
+            report.ended_at = utc_now()
+            write_report(output, report)
+
             remaining = duration_seconds - (loop.time() - started)
             if remaining <= 0:
                 break
@@ -328,6 +340,8 @@ async def run_soak(
 
     report.actual_duration_seconds = loop.time() - started
     report.ended_at = utc_now()
+    report.completed = True
+    write_report(output, report)
     return report
 
 
@@ -346,10 +360,14 @@ def main() -> None:
     if args.duration_seconds <= 0 or args.sample_seconds <= 0:
         raise SystemExit("duration and sample interval must be positive")
     report = asyncio.run(
-        run_soak(args.base_url, args.duration_seconds, args.sample_seconds, args.pid)
+        run_soak(
+            args.base_url,
+            args.duration_seconds,
+            args.sample_seconds,
+            args.pid,
+            args.output,
+        )
     )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(report.markdown())
     print(json.dumps({"output": str(args.output), "samples": report.samples}))
 
 
