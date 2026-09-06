@@ -1,7 +1,9 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Nav } from "./components/Nav";
 import Dashboard from "./pages/Dashboard";
-import Statistics from "./pages/Statistics";
+
+const Statistics = lazy(() => import("./pages/Statistics"));
 
 export default function App() {
   return (
@@ -20,7 +22,14 @@ export default function App() {
 
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/stats" element={<Statistics />} />
+            <Route
+              path="/stats"
+              element={
+                <Suspense fallback={<p className="p-8 text-stone-500">Loading statistics...</p>}>
+                  <Statistics />
+                </Suspense>
+              }
+            />
           </Routes>
         </div>
       </main>
