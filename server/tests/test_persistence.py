@@ -4,11 +4,11 @@ import asyncio
 import time
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 from arb.persistence import OpportunityStore
 from arb.types import ArbitrageOpportunity
-from conftest import wait_for_rows
 
 
 def make_opp(
@@ -27,6 +27,31 @@ def make_opp(
     )
 
 
+WAIT_TIMEOUT_SECONDS = 5.0
+
+
+async def wait_for_rows(store: OpportunityStore, expected: int) -> list[dict[str, Any]]:
+    """Poll until `expected` opportunities are readable, then return them.
+
+    Only for the two tests whose subject is the flush trigger itself; they cannot
+    use the deterministic drain in `close()` without hiding what they assert. The
+    writer flushes on its own interval and aiosqlite commits on a worker thread,
+    so a fixed sleep races the flush — it passes locally and fails on a loaded
+    CI runner.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + WAIT_TIMEOUT_SECONDS
+    while True:
+        rows = await store.recent(limit=expected + 1)
+        if len(rows) >= expected:
+            return rows
+        if loop.time() >= deadline:
+            raise AssertionError(
+                f"{len(rows)} of {expected} opportunities persisted within {WAIT_TIMEOUT_SECONDS}s"
+            )
+        await asyncio.sleep(0.01)
+
+
 @pytest.mark.asyncio
 async def test_initialize_is_idempotent(tmp_path: Path) -> None:
     store = OpportunityStore(str(tmp_path / "db.sqlite3"))
@@ -43,8 +68,7 @@ async def test_batched_flush_by_size_writes_all_rows(tmp_path: Path) -> None:
     for index in range(3):
         await store.enqueue(make_opp(timestamp_ns=index + 1))
     # Allow batch-by-size flush to complete (no need to wait the 5s interval).
-    await wait_for_rows(store, 3)
-    rows = await store.recent(limit=10)
+    rows = await wait_for_rows(store, 3)
     assert len(rows) == 3
     await store.close()
     runner.cancel()
@@ -59,8 +83,7 @@ async def test_flush_interval_drains_partial_batch(tmp_path: Path) -> None:
     runner = asyncio.create_task(store.run())
     await store.enqueue(make_opp(timestamp_ns=1))
     # Far below batch_size, but interval should fire.
-    await wait_for_rows(store, 1)
-    rows = await store.recent(limit=10)
+    rows = await wait_for_rows(store, 1)
     assert len(rows) == 1
     await store.close()
     runner.cancel()
@@ -118,13 +141,12 @@ async def test_decimal_round_trip_preserves_string_form(tmp_path: Path) -> None:
     await store.initialize()
     runner = asyncio.create_task(store.run())
     await store.enqueue(make_opp(timestamp_ns=10))
-    await wait_for_rows(store, 1)
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
     [row] = await store.recent(limit=10)
     # Stored as TEXT — exact round trip with no float drift.
     assert row["buy_price"] == "100.123456789"
     assert row["sell_price"] == "101.987654321"
-    await store.close()
-    runner.cancel()
 
 
 @pytest.mark.asyncio
@@ -136,11 +158,10 @@ async def test_recent_orders_descending_by_timestamp(tmp_path: Path) -> None:
     runner = asyncio.create_task(store.run())
     for ts in (10, 30, 20):
         await store.enqueue(make_opp(timestamp_ns=ts))
-    await wait_for_rows(store, 3)
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
     rows = await store.recent(limit=10)
     assert [row["timestamp_ns"] for row in rows] == [30, 20, 10]
-    await store.close()
-    runner.cancel()
 
 
 @pytest.mark.asyncio
@@ -155,15 +176,14 @@ async def test_stats_window_filters_out_old_rows(tmp_path: Path) -> None:
     await store.enqueue(
         make_opp(timestamp_ns=now_ns - 10_000_000_000_000, spread="9", profit="100")
     )  # ~3h old
-    await wait_for_rows(store, 2)
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
 
     one_hour_ns = 3_600_000_000_000
     stats = await store.stats(window_ns=one_hour_ns)
     assert stats["count"] == 1
     assert Decimal(stats["max_spread_pct"]) == Decimal("2")
     assert Decimal(stats["total_theoretical_profit_usd"]) == Decimal("1")
-    await store.close()
-    runner.cancel()
 
 
 @pytest.mark.asyncio
@@ -199,7 +219,8 @@ async def test_extended_stats_aggregates_within_window(tmp_path: Path) -> None:
     await store.enqueue(
         make_opp(now_ns - 10_000_000_000_000, spread="99", profit="999", pair="ETH-USD")
     )
-    await wait_for_rows(store, 5)
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
 
     stats = await store.extended_stats(window_ns=3_600_000_000_000)
     assert stats["count"] == 4
@@ -207,8 +228,6 @@ async def test_extended_stats_aggregates_within_window(tmp_path: Path) -> None:
     assert Decimal(str(stats["mean_spread_pct"])) == Decimal("2.75")
     assert Decimal(str(stats["total_theoretical_profit_usd"])) == Decimal("13.5")
     assert stats["top_pair"] == "BTC-USD"
-    await store.close()
-    runner.cancel()
 
 
 @pytest.mark.asyncio
@@ -220,14 +239,13 @@ async def test_extended_stats_all_time_with_window_none(tmp_path: Path) -> None:
     runner = asyncio.create_task(store.run())
     await store.enqueue(make_opp(timestamp_ns=1, spread="2", pair="BTC-USD"))
     await store.enqueue(make_opp(timestamp_ns=2, spread="4", pair="BTC-USD"))
-    await wait_for_rows(store, 2)
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
 
     stats = await store.extended_stats(window_ns=None)
     assert stats["count"] == 2
     assert Decimal(str(stats["max_spread_pct"])) == Decimal("4")
     assert stats["top_pair"] == "BTC-USD"
-    await store.close()
-    runner.cancel()
 
 
 @pytest.mark.asyncio
@@ -256,14 +274,13 @@ async def test_peak_minute_returns_busiest_bucket(tmp_path: Path) -> None:
         await store.enqueue(make_opp(timestamp_ns=base + offset))
     for offset in range(5):
         await store.enqueue(make_opp(timestamp_ns=base + minute_ns + offset))
-    await wait_for_rows(store, 7)
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
 
     peak = await store.peak_minute(window_ns=3_600_000_000_000)
     assert peak is not None
     assert peak["count"] == 5
     assert peak["minute_start_ns"] == base + minute_ns
-    await store.close()
-    runner.cancel()
 
 
 @pytest.mark.asyncio
@@ -287,7 +304,8 @@ async def test_timeseries_buckets_and_orders_ascending(tmp_path: Path) -> None:
     await store.enqueue(make_opp(timestamp_ns=base, spread="1"))
     await store.enqueue(make_opp(timestamp_ns=base + 1, spread="3"))
     await store.enqueue(make_opp(timestamp_ns=base + bucket_ns, spread="2"))
-    await wait_for_rows(store, 3)
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
 
     points = await store.timeseries(window_ns=3_600_000_000_000, bucket_seconds=bucket_seconds)
     assert len(points) == 2
@@ -296,8 +314,6 @@ async def test_timeseries_buckets_and_orders_ascending(tmp_path: Path) -> None:
     assert Decimal(str(points[0]["max_spread_pct"])) == Decimal("3")
     assert points[1]["bucket_start_ns"] == base + bucket_ns
     assert points[1]["count"] == 1
-    await store.close()
-    runner.cancel()
 
 
 @pytest.mark.asyncio

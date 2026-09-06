@@ -10,7 +10,6 @@ from arb.api import LiveBroadcaster, create_app
 from arb.orderbook import OrderBookManager
 from arb.persistence import OpportunityStore
 from arb.types import ArbitrageOpportunity, EventKind, LiveMessage, MarketEvent, PriceLevel
-from conftest import wait_for_rows
 from fastapi.testclient import TestClient
 
 
@@ -56,9 +55,8 @@ async def test_recent_endpoint_returns_saved_rows(tmp_path: Path) -> None:
         )
     )
     task = asyncio.create_task(store.run())
-    await asyncio.sleep(0.05)
     await store.close()
-    task.cancel()
+    await asyncio.wait_for(task, timeout=1.0)
 
     client = TestClient(create_app(store, OrderBookManager(), LiveBroadcaster()))
     response = client.get("/api/opportunities/recent?limit=10")
@@ -319,9 +317,8 @@ async def test_stats_endpoint_returns_aggregates(tmp_path: Path) -> None:
         )
     )
     runner = asyncio.create_task(store.run())
-    await asyncio.sleep(0.1)
     await store.close()
-    runner.cancel()
+    await asyncio.wait_for(runner, timeout=1.0)
 
     client = TestClient(create_app(store, OrderBookManager(), LiveBroadcaster()))
     response = client.get("/api/stats?window=1h")
@@ -540,9 +537,8 @@ async def test_system_stats_endpoint_returns_extended_aggregates(tmp_path: Path)
     await store.enqueue(
         _seed_opp(store, timestamp_ns=now - 2, spread_pct=Decimal("1"), pair="ETH-USD")
     )
-    await wait_for_rows(store, 3)
     await store.close()
-    runner.cancel()
+    await asyncio.wait_for(runner, timeout=1.0)
 
     client = TestClient(create_app(store, OrderBookManager(), LiveBroadcaster()))
     response = client.get("/api/system/stats?window=1h")
@@ -566,9 +562,8 @@ async def test_system_timeseries_endpoint_returns_buckets(tmp_path: Path) -> Non
     base = (time.time_ns() // bucket_ns) * bucket_ns
     await store.enqueue(_seed_opp(store, timestamp_ns=base))
     await store.enqueue(_seed_opp(store, timestamp_ns=base + bucket_ns))
-    await wait_for_rows(store, 2)
     await store.close()
-    runner.cancel()
+    await asyncio.wait_for(runner, timeout=1.0)
 
     client = TestClient(create_app(store, OrderBookManager(), LiveBroadcaster()))
     response = client.get("/api/system/timeseries?window=1h&bucket_seconds=60")
