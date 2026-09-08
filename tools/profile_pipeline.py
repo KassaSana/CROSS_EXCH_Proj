@@ -1,7 +1,7 @@
 """Measure the production pipeline with an actual Chromium dashboard connected.
 
 Install: uv sync --locked --extra dev --extra perf
-Run: python server/scripts/profile_pipeline.py --label baseline
+Run: python tools/profile_pipeline.py --label baseline
 Use --profile for a separate cProfile + React production profiling run.
 """
 
@@ -30,7 +30,7 @@ import websockets
 from perf_feed import Feed
 from playwright.async_api import async_playwright
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def source_fingerprint() -> str:
@@ -41,7 +41,7 @@ def source_fingerprint() -> str:
         *ROOT.glob("dashboard/src/**/*.ts"),
         ROOT / "dashboard/vite.config.ts",
         *[
-            ROOT / "server/scripts" / name
+            ROOT / "tools" / name
             for name in ("perf_feed.py", "perf_backend.py", "profile_pipeline.py")
         ],
     ]
@@ -231,7 +231,7 @@ async def scenario(args, rate, browser, output):
     feed_port = server.sockets[0].getsockname()[1]
     command = [
         sys.executable,
-        "server/scripts/perf_backend.py",
+        "tools/perf_backend.py",
         "--port",
         str(port),
         "--feed-port",
@@ -358,7 +358,7 @@ async def main(args):
     build_output, _ = await build.communicate()
     if build.returncode:
         raise RuntimeError(build_output.decode())
-    root = ROOT / "benchmarks" / "performance"
+    root = ROOT / "artifacts" / "benchmarks" / "performance"
     root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     name = f"{args.label}-{mode}-{stamp}"

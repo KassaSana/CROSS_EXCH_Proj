@@ -34,8 +34,8 @@ dashboard build, and coverage checks for the order-book and detector modules.
 ## Synthetic performance
 
 The committed detector and ingest-to-detection measurements are documented in
-[`../BENCHMARKS.md`](../BENCHMARKS.md), with raw values in
-[`../benchmarks/results.json`](../benchmarks/results.json).
+[`BENCHMARKS.md`](BENCHMARKS.md), with raw values in
+[`../artifacts/benchmarks/results.json`](../artifacts/benchmarks/results.json).
 
 These measurements are local and synthetic. They do not include internet latency or
 prove sustained behavior against live exchanges.
@@ -45,7 +45,7 @@ prove sustained behavior against live exchanges.
 A burst investigation dated 2026-09-08 measured the production ingestion path with
 a real headless browser running the built dashboard, at 110, 1,100 and 5,500
 events/s. Method, full results and limits are in
-[`../benchmarks/performance/README.md`](../benchmarks/performance/README.md).
+[`../artifacts/benchmarks/performance/README.md`](../artifacts/benchmarks/performance/README.md).
 
 This closed a gap the earlier synthetic figures concealed. Detector-only timing
 had not shown that, under bursts above the current rate, the baseline dropped
@@ -94,8 +94,8 @@ database larger than 4M rows or the rollup's own growth beyond 30 days.
 
 Two short live runs validate the observer and the current 60-second book-age limit:
 
-- [`soak_smoke_5m_2026-09-05.md`](../benchmarks/soak_smoke_5m_2026-09-05.md)
-- [`soak_validation_60s_window.md`](../benchmarks/soak_validation_60s_window.md)
+- [`soak_smoke_5m_2026-09-05.md`](../artifacts/benchmarks/soak_smoke_5m_2026-09-05.md)
+- [`soak_validation_60s_window.md`](../artifacts/benchmarks/soak_validation_60s_window.md)
 
 The five-minute run observed 29,001 Coinbase events, 2,042 Gemini events, and 1,760
 Binance.US events with no adapter reconnects or detected sequence gaps. A subsequent
@@ -115,5 +115,5 @@ A documented 24-hour live soak is still required. It should capture:
 - background-task and observer HTTP failures
 - process crashes or restarts
 
-Run the observer as described in [`../BENCHMARKS.md`](../BENCHMARKS.md) and commit the
+Run the observer as described in [`BENCHMARKS.md`](BENCHMARKS.md) and commit the
 generated report only after the full run completes.

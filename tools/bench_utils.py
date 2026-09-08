@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-RESULTS_PATH = Path("benchmarks/results.json")
+RESULTS_PATH = Path("artifacts/benchmarks/results.json")
 
 
 def load_results() -> dict[str, Any]:

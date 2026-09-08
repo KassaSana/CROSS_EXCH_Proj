@@ -5,7 +5,7 @@
 .DESCRIPTION
     Starts the backend from the project virtualenv, resolves the process id the
     observer must sample, blocks system sleep for the duration of the run, waits
-    for readiness, then runs server/scripts/soak.py. The backend is stopped and
+    for readiness, then runs tools/soak.py. The backend is stopped and
     sleep is re-enabled on exit, including when the run is interrupted.
 
     Resolving the process id matters: the virtualenv launcher re-execs the base
@@ -17,11 +17,11 @@
     run still leaves a readable report marked "in progress".
 
 .EXAMPLE
-    .\server\scripts\run_soak.ps1
+    .\tools\run_soak.ps1
     Runs the full 24-hour soak with 60-second samples.
 
 .EXAMPLE
-    .\server\scripts\run_soak.ps1 -DurationSeconds 300 -SampleSeconds 10
+    .\tools\run_soak.ps1 -DurationSeconds 300 -SampleSeconds 10
     Runs a short smoke test.
 #>
 [CmdletBinding()]
@@ -35,7 +35,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $python = Join-Path $repoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $python)) {
     throw "Project virtualenv not found at $python. Run 'uv sync --locked --extra dev' first."
@@ -58,9 +58,13 @@ function Resolve-BackendPid {
 
 $stamp = (Get-Date).ToString("yyyy-MM-dd")
 if (-not $Output) {
-    $Output = Join-Path $repoRoot "benchmarks\soak_24h_$stamp.md"
+    $Output = Join-Path $repoRoot "artifacts\benchmarks\soak\soak_24h_$stamp.md"
 }
-$logDir = Join-Path $repoRoot "benchmarks"
+$outputDir = Split-Path -Parent $Output
+if ($outputDir) {
+    New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+}
+$logDir = Join-Path $repoRoot "var\logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $stdoutLog = Join-Path $logDir "soak_backend_$stamp.log"
 $stderrLog = Join-Path $logDir "soak_backend_$stamp.err.log"
@@ -114,7 +118,7 @@ try {
     }
 
     Write-Host "Backend ready. Observing for $DurationSeconds seconds into $Output"
-    & $python (Join-Path $repoRoot "server\scripts\soak.py") `
+    & $python (Join-Path $repoRoot "tools\soak.py") `
         --base-url $BaseUrl `
         --duration-seconds $DurationSeconds `
         --sample-seconds $SampleSeconds `

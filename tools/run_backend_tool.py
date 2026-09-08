@@ -11,7 +11,7 @@ def main() -> int:
         print("usage: run_backend_tool.py MODULE [ARGS...]", file=sys.stderr)
         return 2
 
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]
     executable = "python.exe" if os.name == "nt" else "python"
     python = root / ".venv" / ("Scripts" if os.name == "nt" else "bin") / executable
     if not python.is_file():

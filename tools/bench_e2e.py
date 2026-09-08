@@ -12,7 +12,7 @@ from typing import Any
 
 import websockets
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
 from arb.detector import ArbitrageDetector
 from arb.orderbook import OrderBookManager

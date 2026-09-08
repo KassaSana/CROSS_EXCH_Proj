@@ -177,13 +177,14 @@ exchange or network performance.
 Reproduce them from the repository root:
 
 ```powershell
-python server/scripts/benchmark.py
-python server/scripts/bench_e2e.py --iterations 10000
-python server/scripts/replay.py server/tests/fixtures/recorded
+python tools/benchmark.py
+python tools/bench_e2e.py --iterations 10000
+python tools/replay.py server/tests/fixtures/recorded
 ```
 
-See [`BENCHMARKS.md`](BENCHMARKS.md) for methodology and
-[`benchmarks/results.json`](benchmarks/results.json) for the committed raw results.
+See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for methodology and
+[`artifacts/benchmarks/results.json`](artifacts/benchmarks/results.json) for the
+committed raw results.
 The live observer is documented there as well; the repository includes short smoke
 runs, but not yet the planned 24-hour soak.
 
@@ -199,11 +200,13 @@ server/arb/          Backend modules
   reconcile.py       Periodic live-versus-REST comparison
   main.py            Application wiring and task supervision
 server/tests/        Unit, property, replay, and pipeline tests
-server/scripts/      Benchmark, replay, capture, and soak utilities
 dashboard/src/       React/TypeScript dashboard
-benchmarks/          Machine-readable results and live-run artifacts
+tools/                Benchmark, replay, profiling, and soak utilities
+artifacts/benchmarks/ Machine-readable results and live-run artifacts
+docs/BENCHMARKS.md   Benchmark and soak methodology
 docs/RESYNC.md       Current recovery design decision
 docs/VALIDATION.md   Verified behavior and remaining validation evidence
+var/                  Ignored local database, logs, and temporary files
 ```
 
 ## Scope and limitations

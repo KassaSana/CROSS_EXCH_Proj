@@ -11,7 +11,7 @@ Purpose:
 Command:
 
 ```bash
-python3 server/scripts/benchmark.py
+python3 tools/benchmark.py
 ```
 
 Current output:
@@ -32,7 +32,7 @@ Purpose:
 Command:
 
 ```bash
-python3 server/scripts/bench_e2e.py --iterations 10000
+python3 tools/bench_e2e.py --iterations 10000
 ```
 
 Current output:
@@ -52,18 +52,20 @@ Notes:
 - the end-to-end benchmark uses an in-process synthetic websocket server
 - the detector microbenchmark is not a valid claim for full pipeline throughput
 
-Raw persisted results live in [benchmarks/results.json](benchmarks/results.json).
+Raw persisted results live in
+[`../artifacts/benchmarks/results.json`](../artifacts/benchmarks/results.json).
 
 ## Connected-dashboard burst profiling
 
 For process CPU/RSS, receive-to-detection and sender-to-detection p95/p99,
 queue drops, browser frame/long-task measurements, and separate Python/React
-profiles, see [the connected-dashboard investigation](benchmarks/performance/README.md).
+profiles, see
+[the connected-dashboard investigation](../artifacts/benchmarks/performance/README.md).
 This exercises the production handler and an actual production-built React
 dashboard; the older synthetic benchmark above does not include those paths.
 
 The current verification summary and remaining live-soak gap are tracked in
-[docs/VALIDATION.md](docs/VALIDATION.md).
+[VALIDATION.md](VALIDATION.md).
 
 ## 3. Live Soak Observer
 
@@ -71,7 +73,7 @@ On Windows, run the launcher. It starts the backend, waits for readiness, blocks
 system sleep for the duration, samples, and stops the backend on exit:
 
 ```powershell
-.\server\scripts\run_soak.ps1
+.\tools\run_soak.ps1
 ```
 
 It defaults to the full 24-hour run at a 60-second sample interval, which gives
@@ -80,11 +82,11 @@ roughly 1,441 samples. Shorter runs take `-DurationSeconds` and `-SampleSeconds`
 The observer can also be driven directly:
 
 ```bash
-python3 server/scripts/soak.py \
+python3 tools/soak.py \
   --duration-seconds 86400 \
   --sample-seconds 60 \
   --pid <backend-pid> \
-  --output benchmarks/soak_YYYY-MM-DD.md
+  --output artifacts/benchmarks/soak/soak_YYYY-MM-DD.md
 ```
 
 Pass the pid of the interpreter actually running `arb.main`. A virtualenv or `uv

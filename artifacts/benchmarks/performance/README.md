@@ -144,18 +144,18 @@ From the repository root, with Node and an installed Chrome browser:
 
 ```powershell
 uv sync --locked --extra dev --extra perf
-uv run python server/scripts/profile_pipeline.py --label baseline --repeats 2
+uv run python tools/profile_pipeline.py --label baseline --repeats 2
 # Run after the change to compare against the baseline. The committed reports
 # use the labels `optimized` (coalescing) and `dedupe` (plus suppression):
-uv run python server/scripts/profile_pipeline.py --label dedupe --repeats 2
+uv run python tools/profile_pipeline.py --label dedupe --repeats 2
 # Separate diagnostic run, not a capacity benchmark:
-uv run python server/scripts/profile_pipeline.py --label dedupe --rates 1100 --seconds 10 --profile
-uv run python server/scripts/check_dashboard.py
+uv run python tools/profile_pipeline.py --label dedupe --rates 1100 --seconds 10 --profile
+uv run python tools/check_dashboard.py
 ```
 
 The runner builds into `dashboard/dist-perf`, starts a private localhost backend,
 launches an isolated headless Chrome context, and creates a new SQLite database
-per scenario under `raw/`. It never opens the normal `arb.sqlite3` history.
+per scenario under `raw/`. It never opens the normal `var/arb.sqlite3` history.
 Chrome can be replaced with installed Edge using `--channel msedge`. The runner
 cleans up its child backend, feed server, and browser. Do not run performance
 scenarios concurrently or edit source while a run is active. Reports include

@@ -12,12 +12,14 @@ Read [`AGENTS.md`](AGENTS.md) for repository-wide contribution and commit rules.
 server/arb/          Backend package
 server/arb/adapters/ Exchange-specific protocol and recovery logic
 server/tests/        Backend tests
-server/scripts/      Benchmark, replay, capture, and soak tools
 dashboard/src/       React/TypeScript dashboard
+tools/                Benchmark, replay, profiling, and soak tools
+artifacts/benchmarks/ Benchmark results and live-run artifacts
 docs/RESYNC.md       Recovery design decision
 docs/VALIDATION.md   Current verification status and remaining evidence
-BENCHMARKS.md        Benchmark and soak methodology
+docs/BENCHMARKS.md   Benchmark and soak methodology
 config.toml          Runtime configuration
+var/                 Ignored runtime data
 ```
 
 ## Architectural invariants

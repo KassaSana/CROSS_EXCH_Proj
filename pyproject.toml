@@ -37,6 +37,7 @@ build-backend = "setuptools.build_meta"
 [tool.pytest.ini_options]
 pythonpath = ["server"]
 testpaths = ["server/tests"]
+cache_dir = "var/cache/pytest"
 filterwarnings = [
   # Remove after a Starlette release includes https://github.com/Kludex/starlette/pull/3498.
   "ignore:The anyio\\.abc\\.BlockingPortal alias is deprecated, use anyio\\.from_thread\\.BlockingPortal instead\\.:DeprecationWarning:starlette\\.testclient",
@@ -45,9 +46,11 @@ filterwarnings = [
 [tool.mypy]
 strict = true
 python_version = "3.11"
+cache_dir = "var/cache/mypy"
 
 [tool.ruff]
 line-length = 100
+cache-dir = "var/cache/ruff"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]

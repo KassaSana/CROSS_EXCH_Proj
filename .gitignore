@@ -15,7 +15,7 @@ htmlcov/
 *.egg-info/
 *.tsbuildinfo
 *.sqlite3
-benchmarks/*.log
-.tmp/
+var/*
+!var/.gitkeep
 dashboard/dist-perf/
-benchmarks/performance/raw/
+artifacts/benchmarks/performance/raw/

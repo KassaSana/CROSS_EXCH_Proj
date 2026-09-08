@@ -14,7 +14,7 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright, expect
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
