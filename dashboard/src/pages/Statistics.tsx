@@ -9,10 +9,14 @@ import {
   WindowKey,
   WindowStats,
 } from "../api/client";
+import { ErrorBoundary } from "../components/ErrorBoundary";
+import { Modal } from "../components/Modal";
 import { OpportunitiesChart } from "../components/OpportunitiesChart";
 import { PeakCard } from "../components/PeakCard";
+import { Placeholder } from "../components/Placeholder";
 import { UptimeCard } from "../components/UptimeCard";
 import { WindowStatsGrid } from "../components/WindowStatsGrid";
+import { Async, failed, loading, ready } from "../lib/async";
 
 const WINDOWS: { key: WindowKey; label: string; bucketSeconds: number }[] = [
   { key: "1h", label: "1 hour", bucketSeconds: 60 },
@@ -21,121 +25,156 @@ const WINDOWS: { key: WindowKey; label: string; bucketSeconds: number }[] = [
   { key: "1w", label: "1 week", bucketSeconds: 3600 },
 ];
 
-const POLL_MS = 5000;
+const POLL_MS = 5_000;
 
 export default function Statistics() {
-  const [overview, setOverview] = useState<SystemOverview | null>(null);
-  const [stats, setStats] = useState<WindowStats | null>(null);
-  const [timeseries, setTimeseries] = useState<Timeseries | null>(null);
+  const [overview, setOverview] = useState<Async<SystemOverview>>(loading);
+  const [stats, setStats] = useState<Async<WindowStats>>(loading);
+  const [timeseries, setTimeseries] = useState<Async<Timeseries>>(loading);
   const [windowKey, setWindowKey] = useState<WindowKey>("1h");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
-  const refresh = useCallback(async (key: WindowKey) => {
-    const window = WINDOWS.find((w) => w.key === key) ?? WINDOWS[0];
-    const [ov, st, ts] = await Promise.all([
-      fetchSystemOverview().catch(() => null),
-      fetchSystemStats(window.key).catch(() => null),
-      fetchSystemTimeseries(window.key, window.bucketSeconds).catch(() => null),
+  const active = WINDOWS.find((entry) => entry.key === windowKey) ?? WINDOWS[0];
+
+  const refresh = useCallback(async (key: WindowKey, bucketSeconds: number) => {
+    const [nextOverview, nextStats, nextSeries] = await Promise.all([
+      fetchSystemOverview().then(ready).catch(failed<SystemOverview>),
+      fetchSystemStats(key).then(ready).catch(failed<WindowStats>),
+      fetchSystemTimeseries(key, bucketSeconds).then(ready).catch(failed<Timeseries>),
     ]);
-    setOverview(ov);
-    setStats(st);
-    setTimeseries(ts);
+    setOverview(nextOverview);
+    setStats(nextStats);
+    setTimeseries(nextSeries);
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- polling pattern: refresh fetches and updates state asynchronously
-    void refresh(windowKey);
-    const id = window.setInterval(() => void refresh(windowKey), POLL_MS);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- polling pattern: refresh awaits the network before it ever sets state
+    void refresh(active.key, active.bucketSeconds);
+    const id = window.setInterval(
+      () => void refresh(active.key, active.bucketSeconds),
+      POLL_MS,
+    );
     return () => window.clearInterval(id);
-  }, [windowKey, refresh]);
+  }, [active.key, active.bucketSeconds, refresh]);
 
   const handleResetConfirmed = async () => {
-    setConfirmOpen(false);
     try {
       const result = await resetSystemTimer();
+      setResetError(null);
+      setConfirmOpen(false);
       setOverview((current) =>
-        current
-          ? { ...current, started_at_ns: result.started_at_ns, uptime_seconds: 0 }
+        current.state === "ready"
+          ? ready({ ...current.data, started_at_ns: result.started_at_ns, uptime_seconds: 0 })
           : current,
       );
-    } catch {
-      // Ignore: next poll will recover
+    } catch (error: unknown) {
+      setResetError(error instanceof Error ? error.message : "Reset failed");
     }
   };
 
   return (
-    <div className="space-y-6">
-      <UptimeCard
-        startedAtNs={overview?.started_at_ns ?? null}
-        onReset={() => setConfirmOpen(true)}
-      />
+    <div className="space-y-3">
+      {overview.state === "failed" ? (
+        <Placeholder
+          state="failed"
+          title="Could not load the system overview"
+          detail={overview.error}
+          onRetry={() => void refresh(active.key, active.bucketSeconds)}
+        />
+      ) : (
+        <>
+          <UptimeCard
+            startedAtNs={overview.state === "ready" ? overview.data.started_at_ns : null}
+            onReset={() => {
+              setResetError(null);
+              setConfirmOpen(true);
+            }}
+          />
+          <PeakCard
+            allTimeCount={overview.state === "ready" ? overview.data.all_time_count : 0}
+            allTimeMaxSpread={
+              overview.state === "ready" ? overview.data.all_time_max_spread_pct : "0"
+            }
+            allTimePeakMinute={
+              overview.state === "ready" ? overview.data.all_time_peak_minute : null
+            }
+          />
+        </>
+      )}
 
-      <PeakCard
-        allTimeCount={overview?.all_time_count ?? 0}
-        allTimeMaxSpread={overview?.all_time_max_spread_pct ?? "0"}
-        allTimePeakMinute={overview?.all_time_peak_minute ?? null}
-      />
-
-      <section className="rounded-[2rem] border border-stone-300 bg-white/80 p-6 shadow-sm">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-stone-500">Window</p>
-            <h2 className="mt-2 font-display text-2xl text-ink">Stats over time</h2>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {WINDOWS.map((w) => {
-              const active = w.key === windowKey;
-              return (
-                <button
-                  key={w.key}
-                  type="button"
-                  onClick={() => setWindowKey(w.key)}
-                  className={[
-                    "rounded-2xl px-4 py-2 text-xs uppercase tracking-[0.25em] transition-colors",
-                    active
-                      ? "bg-ink text-white"
-                      : "border border-stone-300 bg-white text-stone-600 hover:bg-stone-50",
-                  ].join(" ")}
-                >
-                  {w.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      <WindowStatsGrid stats={stats} />
-      <OpportunitiesChart data={timeseries} window={windowKey} />
-
-      {confirmOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 px-4">
-          <div className="w-full max-w-md rounded-[2rem] border border-stone-300 bg-white p-6 shadow-lg">
-            <p className="text-xs uppercase tracking-[0.25em] text-stone-500">Confirm reset</p>
-            <h3 className="mt-2 font-display text-2xl text-ink">Reset uptime counter?</h3>
-            <p className="mt-3 text-sm text-stone-600">
-              This resets the displayed uptime to zero. Your historical opportunity data is
-              preserved — windowed stats and peaks will continue to reflect real history.
-            </p>
-            <div className="mt-6 flex justify-end gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-line bg-panel px-4 py-2.5">
+        <p className="text-sm font-medium text-ink">Stats over time</p>
+        <div
+          role="group"
+          aria-label="Time window"
+          className="flex items-center gap-1 rounded border border-line p-0.5"
+        >
+          {WINDOWS.map((entry) => {
+            const selected = entry.key === windowKey;
+            return (
               <button
+                key={entry.key}
                 type="button"
-                onClick={() => setConfirmOpen(false)}
-                className="rounded-2xl border border-stone-300 bg-white px-4 py-2 text-sm uppercase tracking-[0.2em] text-stone-700 hover:bg-stone-50"
+                aria-pressed={selected}
+                onClick={() => setWindowKey(entry.key)}
+                className={`rounded px-3 py-1 text-xs transition-colors ${
+                  selected ? "bg-raised text-ink" : "text-ink-3 hover:text-ink-2"
+                }`}
               >
-                Cancel
+                {entry.label}
               </button>
-              <button
-                type="button"
-                onClick={() => void handleResetConfirmed()}
-                className="rounded-2xl bg-ink px-4 py-2 text-sm uppercase tracking-[0.2em] text-white hover:bg-stone-700"
-              >
-                Reset
-              </button>
-            </div>
-          </div>
+            );
+          })}
         </div>
-      ) : null}
+      </div>
+
+      <ErrorBoundary label="Window stats">
+        <WindowStatsGrid
+          stats={stats}
+          windowLabel={active.label}
+          onRetry={() => void refresh(active.key, active.bucketSeconds)}
+        />
+      </ErrorBoundary>
+
+      <ErrorBoundary label="Opportunities chart">
+        <OpportunitiesChart
+          data={timeseries}
+          window={active.key}
+          windowLabel={active.label}
+          onRetry={() => void refresh(active.key, active.bucketSeconds)}
+        />
+      </ErrorBoundary>
+
+      <Modal
+        open={confirmOpen}
+        title="Reset uptime counter?"
+        onClose={() => setConfirmOpen(false)}
+      >
+        <p className="mt-3 text-xs leading-relaxed text-ink-2">
+          This resets the displayed uptime to zero. Your historical opportunity data is
+          preserved, so windowed stats and peaks keep reflecting real history.
+        </p>
+        {resetError !== null ? (
+          <p className="mt-3 text-micro text-crit">{resetError}</p>
+        ) : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(false)}
+            className="rounded border border-line px-3 py-1.5 text-xs text-ink-2 transition-colors hover:border-ink-3 hover:text-ink"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleResetConfirmed()}
+            className="rounded border border-ink-3 bg-raised px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:border-ink-2 hover:bg-line"
+          >
+            Reset timer
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
