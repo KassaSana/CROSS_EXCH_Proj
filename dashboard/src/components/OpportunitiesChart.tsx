@@ -1,72 +1,142 @@
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { Timeseries, WindowKey } from "../api/client";
+import { Async } from "../lib/async";
+import { nsToMs } from "../lib/format";
+import { Panel } from "./Panel";
+import { Placeholder } from "./Placeholder";
 
 type Props = {
-  data: Timeseries | null;
+  data: Async<Timeseries>;
   window: WindowKey;
+  windowLabel: string;
+  onRetry: () => void;
 };
 
+const GRID = "#1E2A36";
+const AXIS_INK = "#7C8B9B";
+const SIGNAL = "#3ECF8E";
+
 function formatTick(ns: string, window: WindowKey): string {
-  const d = new Date(Number(BigInt(ns) / 1_000_000n));
+  const date = new Date(nsToMs(ns));
   if (window === "1h" || window === "4h") {
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-export function OpportunitiesChart({ data, window }: Props) {
-  const points = data?.points ?? [];
-  const allZero = points.every((p) => p.count === 0);
-
-  if (points.length === 0 || allZero) {
+export function OpportunitiesChart({ data, window, windowLabel, onRetry }: Props) {
+  if (data.state === "failed") {
     return (
-      <section className="rounded-[2rem] border border-dashed border-stone-300 bg-stone-50 p-8 text-center text-stone-500 shadow-sm">
-        <p className="text-xs uppercase tracking-[0.25em]">No timeseries data yet</p>
-        <p className="mt-2 text-sm">The chart will render once opportunities accumulate.</p>
-      </section>
+      <Placeholder
+        state="failed"
+        title="Could not load the timeseries"
+        detail={data.error}
+        onRetry={onRetry}
+      />
     );
   }
 
-  const chartData = points.map((p) => ({
-    bucket: p.bucket_start_ns,
-    count: p.count,
-    label: formatTick(p.bucket_start_ns, window),
+  if (data.state === "loading") {
+    return (
+      <Panel title="Opportunities over time">
+        <p className="px-4 py-6 text-xs text-ink-3">Loading timeseries.</p>
+      </Panel>
+    );
+  }
+
+  const points = data.data.points;
+  if (points.length === 0 || points.every((point) => point.count === 0)) {
+    return (
+      <Placeholder
+        state="empty"
+        title="No opportunities recorded in this window"
+        detail="The chart draws itself once the detector logs its first spread."
+      />
+    );
+  }
+
+  // A single bucket is a number, not a trend. Plotting it produces one
+  // floating dot in an empty grid, which reads as a broken chart.
+  if (points.length < 2) {
+    return (
+      <Placeholder
+        state="empty"
+        title={`${points[0].count} opportunities so far, all inside one bucket`}
+        detail="At least two buckets of history are needed before a trend means anything."
+      />
+    );
+  }
+
+  const chartData = points.map((point) => ({
+    count: point.count,
+    label: formatTick(point.bucket_start_ns, window),
   }));
 
   return (
-    <section className="rounded-[2rem] border border-stone-300 bg-white/80 p-6 shadow-sm">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-stone-500">Opportunities Over Time</p>
-          <h2 className="mt-2 font-display text-2xl text-ink">Activity ({window})</h2>
-        </div>
-        <p className="text-sm text-stone-500">{points.length} buckets</p>
-      </div>
-      <div className="h-64">
+    <Panel
+      title={`Opportunities over the last ${windowLabel}`}
+      meta={`${points.length} buckets · ${points.reduce(
+        (total, point) => total + point.count,
+        0,
+      )} detections`}
+    >
+      <div className="h-64 px-2 pb-2 pt-4">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+          <AreaChart data={chartData} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
             <defs>
-              <linearGradient id="opps" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#78716c" stopOpacity={0.6} />
-                <stop offset="95%" stopColor="#78716c" stopOpacity={0.05} />
+              <linearGradient id="opportunity-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={SIGNAL} stopOpacity={0.28} />
+                <stop offset="100%" stopColor={SIGNAL} stopOpacity={0.02} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#78716c" }} stroke="#d6d3d1" />
-            <YAxis tick={{ fontSize: 11, fill: "#78716c" }} stroke="#d6d3d1" allowDecimals={false} />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "rgba(255,255,255,0.95)",
-                border: "1px solid #d6d3d1",
-                borderRadius: "0.75rem",
-                fontSize: 12,
-              }}
-              labelStyle={{ color: "#44403c" }}
+            <CartesianGrid vertical={false} stroke={GRID} />
+            <XAxis
+              dataKey="label"
+              tick={{ fontSize: 11, fill: AXIS_INK, fontFamily: "IBM Plex Mono, monospace" }}
+              axisLine={{ stroke: GRID }}
+              tickLine={false}
+              minTickGap={24}
             />
-            <Area type="monotone" dataKey="count" stroke="#44403c" strokeWidth={2} fill="url(#opps)" />
+            <YAxis
+              tick={{ fontSize: 11, fill: AXIS_INK, fontFamily: "IBM Plex Mono, monospace" }}
+              axisLine={false}
+              tickLine={false}
+              allowDecimals={false}
+              width={36}
+            />
+            <Tooltip
+              cursor={{ stroke: "#3D4C5C", strokeWidth: 1 }}
+              contentStyle={{
+                backgroundColor: "#1C2733",
+                border: "1px solid #263341",
+                borderRadius: "3px",
+                fontSize: 12,
+                fontFamily: "IBM Plex Mono, monospace",
+                color: "#E6ECF2",
+              }}
+              labelStyle={{ color: "#9BAAB9", fontFamily: "IBM Plex Sans, sans-serif" }}
+              formatter={(value: number) => [value, "Opportunities"]}
+            />
+            <Area
+              type="monotone"
+              dataKey="count"
+              stroke={SIGNAL}
+              strokeWidth={2}
+              fill="url(#opportunity-fill)"
+              dot={false}
+              activeDot={{ r: 4, fill: SIGNAL, stroke: "#0F151C", strokeWidth: 2 }}
+            />
           </AreaChart>
         </ResponsiveContainer>
       </div>
-    </section>
+    </Panel>
   );
 }

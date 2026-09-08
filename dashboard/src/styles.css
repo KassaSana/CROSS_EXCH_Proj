@@ -3,17 +3,72 @@
 @tailwind utilities;
 
 :root {
-  color: #1f2937;
-  background:
-    radial-gradient(circle at top left, rgba(245, 158, 11, 0.18), transparent 22%),
-    linear-gradient(180deg, #f8f3ea 0%, #f4efe6 100%);
+  color-scheme: dark;
+  background-color: #0f151c;
+  color: #e6ecf2;
 }
 
 body {
   margin: 0;
-  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Every figure in this app is monospaced and tabular so streaming values
+   never shift horizontally as they tick. */
+.num {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "zero" 1;
+}
+
+/* WCAG 2.2: a visible focus indicator on everything reachable, with an
+   offset ring that stays legible against both panel and raised surfaces. */
+:focus-visible {
+  outline: 2px solid #e6ecf2;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+::selection {
+  background-color: #2e8f63;
+  color: #e6ecf2;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0f151c;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #263341;
+  border: 2px solid #0f151c;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #35455699;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

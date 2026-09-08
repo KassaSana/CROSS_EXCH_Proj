@@ -1,38 +1,45 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { Nav } from "./components/Nav";
+import { TopBar } from "./components/TopBar";
 import Dashboard from "./pages/Dashboard";
+import { LiveProvider, useLive } from "./state/live";
 
 const Statistics = lazy(() => import("./pages/Statistics"));
+
+function Chrome() {
+  const { status, lastTickAgeMs } = useLive();
+  return <TopBar status={status} lastTickAgeMs={lastTickAgeMs} />;
+}
 
 export default function App() {
   return (
     <BrowserRouter>
-      <main className="min-h-screen bg-canvas px-4 py-8 text-ink">
-        <div className="mx-auto max-w-7xl">
-          <header className="mb-8 rounded-[2rem] border border-stone-300 bg-gradient-to-r from-white to-amber-50 p-8 shadow-sm">
-            <p className="text-xs uppercase tracking-[0.35em] text-stone-500">Portfolio System Design Build</p>
-            <h1 className="mt-3 font-display text-5xl leading-tight">Cross-Exchange Arbitrage Detector</h1>
-            <p className="mt-4 max-w-3xl text-stone-600">
-              Event-driven market data ingestion, in-memory book maintenance, theoretical arbitrage detection, and live streaming observability.
-            </p>
-          </header>
-
-          <Nav />
-
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route
-              path="/stats"
-              element={
-                <Suspense fallback={<p className="p-8 text-stone-500">Loading statistics...</p>}>
-                  <Statistics />
-                </Suspense>
-              }
-            />
-          </Routes>
+      <LiveProvider>
+        <div className="min-h-screen bg-ground text-ink">
+          <a
+            href="#content"
+            className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded focus:border focus:border-line focus:bg-raised focus:px-3 focus:py-1.5 focus:text-xs focus:text-ink"
+          >
+            Skip to content
+          </a>
+          <Chrome />
+          <main id="content" className="mx-auto max-w-[1600px] px-4 py-4">
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route
+                path="/stats"
+                element={
+                  <Suspense
+                    fallback={<p className="px-1 py-6 text-xs text-ink-3">Loading statistics.</p>}
+                  >
+                    <Statistics />
+                  </Suspense>
+                }
+              />
+            </Routes>
+          </main>
         </div>
-      </main>
+      </LiveProvider>
     </BrowserRouter>
   );
 }
