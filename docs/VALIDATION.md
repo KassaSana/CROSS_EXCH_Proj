@@ -6,7 +6,7 @@ tests, and focused documents such as [`RESYNC.md`](RESYNC.md).
 
 ## Automated verification
 
-Current baseline: 157 backend tests passing as of 2026-09-08.
+Current baseline: 161 backend tests passing as of 2026-09-08.
 
 The suite covers:
 
@@ -22,6 +22,9 @@ The suite covers:
   of unchanged book updates, including a sequence-gap storm
 - cached top-of-book invalidation across size changes, level deletion, sequence
   gaps, snapshot recovery, and disconnect
+- per-minute statistics rollup: backfill of pre-rollup history, consistency
+  across separate write batches, exactness for a window starting mid-minute,
+  and sub-minute buckets bypassing the rollup
 - WebSocket reconnection and state restoration
 - REST, readiness, metrics, persistence, and statistics behavior
 
@@ -58,6 +61,35 @@ These runs use modeled local bursts, a single dashboard client, and a fresh
 database per scenario. They are not live-traffic evidence and do not replace the
 soak below.
 
+## Statistics query scaling
+
+The statistics endpoints previously aggregated every stored opportunity inside
+the requested window on each five-second poll, and `/api/system/stats` requests
+two all-history aggregates. Measured on synthetic databases of 100,000, 1M and
+4M opportunities spread over 30 days:
+
+| Stored opportunities | `/api/system/stats` before | after |
+| ---: | ---: | ---: |
+| 100,000 | 532 ms | 100 ms |
+| 1,000,000 | 6.8 s | 600 ms |
+| 4,000,000 | 51.0 s | 631 ms |
+
+A per-minute, per-pair rollup is now maintained as opportunities are written, so
+these queries read one row per minute and pair. The rollup grows with elapsed
+time rather than opportunity volume: it held 388,796 rows for the 4M-row
+database, and a higher rate over the same 30 days would not enlarge it. A
+database written before the rollup existed is backfilled once on startup, which
+took 0.3 s, 4.0 s and 12.9 s for the three sizes.
+
+Results were checked against the previous full-scan queries on all three
+databases, with time frozen so both sides used identical window cutoffs. All
+eight query variants matched, including windows starting mid-minute and
+sub-minute timeseries buckets, which do not use the rollup.
+
+These are synthetic databases with uniformly distributed timestamps across nine
+pairs. Real history may cluster differently, and no measurement covers a
+database larger than 4M rows or the rollup's own growth beyond 30 days.
+
 ## Live observations
 
 Two short live runs validate the observer and the current 60-second book-age limit:
@@ -82,10 +114,6 @@ A documented 24-hour live soak is still required. It should capture:
 - persistence queue drops and WebSocket client overflows
 - background-task and observer HTTP failures
 - process crashes or restarts
-
-Statistics queries remain unmeasured against a large history. `extended_stats` and
-`peak_minute` aggregate every row inside the requested window on each poll, so
-their cost grows with retained history; no measurement of that scaling exists yet.
 
 Run the observer as described in [`../BENCHMARKS.md`](../BENCHMARKS.md) and commit the
 generated report only after the full run completes.

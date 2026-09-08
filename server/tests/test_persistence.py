@@ -322,3 +322,117 @@ async def test_timeseries_rejects_non_positive_bucket(tmp_path: Path) -> None:
     await store.initialize()
     with pytest.raises(ValueError):
         await store.timeseries(window_ns=3_600_000_000_000, bucket_seconds=0)
+
+
+@pytest.mark.asyncio
+async def test_rollup_backfills_a_database_written_before_it_existed(tmp_path: Path) -> None:
+    """History predating the rollup must still be reported by the statistics."""
+    import sqlite3
+
+    from arb.persistence import CREATE_INDEX_SQL, CREATE_TABLE_SQL
+
+    path = str(tmp_path / "legacy.sqlite3")
+    now_ns = time.time_ns()
+    legacy = sqlite3.connect(path)
+    legacy.executescript(CREATE_TABLE_SQL)
+    legacy.executescript(CREATE_INDEX_SQL)
+    legacy.executemany(
+        "INSERT INTO opportunities (timestamp_ns, pair, buy_exchange, sell_exchange,"
+        " buy_price, sell_price, spread_pct, max_size, theoretical_profit_usd)"
+        " VALUES (?, ?, 'gemini', 'coinbase', '100', '101', ?, '1', ?)",
+        [
+            (now_ns, "BTC-USD", "2", "1"),
+            (now_ns - 1, "BTC-USD", "4", "2"),
+            (now_ns - 2, "ETH-USD", "6", "3"),
+        ],
+    )
+    legacy.commit()
+    legacy.close()
+
+    store = OpportunityStore(path)
+    await store.initialize()
+
+    stats = await store.extended_stats(window_ns=None)
+    assert stats["count"] == 3
+    assert Decimal(str(stats["max_spread_pct"])) == Decimal("6")
+    assert Decimal(str(stats["mean_spread_pct"])) == Decimal("4")
+    assert Decimal(str(stats["total_theoretical_profit_usd"])) == Decimal("6")
+    assert stats["top_pair"] == "BTC-USD"
+
+    # Backfilling twice would double every total.
+    await store.initialize()
+    assert (await store.extended_stats(window_ns=None))["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_rollup_stays_consistent_across_separate_write_batches(tmp_path: Path) -> None:
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"), batch_size=2, flush_interval_seconds=0.05
+    )
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+    now_ns = time.time_ns()
+    # Five opportunities in one minute across three flushes of two.
+    for index in range(5):
+        await store.enqueue(make_opp(now_ns - index, spread=str(index + 1), profit="1"))
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
+
+    stats = await store.extended_stats(window_ns=None)
+    assert stats["count"] == 5
+    assert Decimal(str(stats["max_spread_pct"])) == Decimal("5")
+    assert Decimal(str(stats["mean_spread_pct"])) == Decimal("3")
+    assert Decimal(str(stats["total_theoretical_profit_usd"])) == Decimal("5")
+    assert (await store.peak_minute(window_ns=None)) == {
+        "minute_start_ns": (now_ns // 60_000_000_000) * 60_000_000_000,
+        "count": 5,
+    }
+
+
+@pytest.mark.asyncio
+async def test_window_starting_mid_minute_excludes_earlier_rows_in_that_minute(
+    tmp_path: Path,
+) -> None:
+    """The rollup holds whole minutes; a window cutting one must stay exact."""
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05
+    )
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+    now_ns = time.time_ns()
+    minute_start = (now_ns // 60_000_000_000) * 60_000_000_000
+    # Both land in the same minute, on opposite sides of a 30-second window.
+    await store.enqueue(make_opp(minute_start + 55_000_000_000, spread="2", profit="1"))
+    await store.enqueue(make_opp(minute_start + 5_000_000_000, spread="90", profit="500"))
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
+
+    cutoff_ns = minute_start + 30_000_000_000
+    stats = await store.extended_stats(window_ns=time.time_ns() - cutoff_ns)
+    assert stats["count"] == 1
+    assert Decimal(str(stats["max_spread_pct"])) == Decimal("2")
+    assert Decimal(str(stats["total_theoretical_profit_usd"])) == Decimal("1")
+    assert (await store.peak_minute(window_ns=time.time_ns() - cutoff_ns)) == {
+        "minute_start_ns": minute_start,
+        "count": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sub_minute_timeseries_buckets_do_not_use_the_rollup(tmp_path: Path) -> None:
+    store = OpportunityStore(
+        str(tmp_path / "db.sqlite3"), batch_size=10, flush_interval_seconds=0.05
+    )
+    await store.initialize()
+    runner = asyncio.create_task(store.run())
+    now_ns = time.time_ns()
+    minute_start = (now_ns // 60_000_000_000) * 60_000_000_000
+    await store.enqueue(make_opp(minute_start + 1_000_000_000, spread="2"))
+    await store.enqueue(make_opp(minute_start + 40_000_000_000, spread="3"))
+    await store.close()
+    await asyncio.wait_for(runner, timeout=1.0)
+
+    points = await store.timeseries(window_ns=3_600_000_000_000, bucket_seconds=30)
+    assert [point["count"] for point in points] == [1, 1]
+    # Floats via SQL MAX(CAST(... AS REAL)), matching the pre-rollup format.
+    assert [str(point["max_spread_pct"]) for point in points] == ["2.0", "3.0"]
