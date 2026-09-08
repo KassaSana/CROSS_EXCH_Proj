@@ -1,0 +1,116 @@
+         3497816 function calls (3453541 primitive calls) in 11.382 seconds
+
+   Ordered by: internal time
+   List reduced from 787 to 50 due to restriction <50>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     4044    7.979    0.002    8.077    0.002 {built-in method _overlapped.GetQueuedCompletionStatus}
+    88270    0.198    0.000    0.609    0.000 orderbook.py:163(top_of_book)
+    11000    0.183    0.000    2.153    0.000 main.py:81(process_market_event)
+    46446    0.162    0.000    0.249    0.000 metrics.py:138(labels)
+   176540    0.146    0.000    0.242    0.000 orderbook.py:50(best)
+    44216    0.113    0.000    0.542    0.000 orderbook.py:182(eligibility)
+     9680    0.099    0.000    0.440    0.000 coinbase.py:52(parse_message)
+    10340    0.077    0.000    0.137    0.000 dataclasses.py:1540(replace)
+   288923    0.072    0.000    0.072    0.000 {method 'get' of 'dict' objects}
+      894    0.068    0.000    2.942    0.003 perf_backend.py:109(consume)
+     9680    0.065    0.000    0.162    0.000 coinbase.py:131(_build_event)
+    11000    0.061    0.000    0.291    0.000 orderbook.py:114(apply)
+    10574    0.052    0.000    0.772    0.000 base.py:102(stream_events)
+    11010    0.047    0.000    0.156    0.000 frames.py:241(parse)
+    22000    0.047    0.000    0.063    0.000 orderbook.py:32(set_level)
+    24446    0.047    0.000    0.126    0.000 api.py:87(broadcast)
+24460/2446    0.047    0.000    0.122    0.000 dataclasses.py:1332(_asdict_inner)
+    11000    0.045    0.000    0.045    0.000 decoder.py:344(raw_decode)
+     3019    0.042    0.000    8.139    0.003 windows_events.py:761(_poll)
+     4724    0.040    0.000    0.040    0.000 {method 'flush' of 'zlib.Compress' objects}
+   125892    0.039    0.000    0.039    0.000 metrics.py:176(<genexpr>)
+    33000    0.037    0.000    0.648    0.000 orderbook.py:232(eligible_top_of_book)
+    92892    0.036    0.000    0.036    0.000 {built-in method builtins.sorted}
+153026/130912    0.036    0.000    0.043    0.000 {built-in method builtins.len}
+    46448    0.035    0.000    0.046    0.000 values.py:27(inc)
+    11269    0.035    0.000    0.090    0.000 messages.py:127(get)
+    11000    0.034    0.000    0.043    0.000 detector.py:13(detect_for_pair)
+     3019    0.031    0.000   14.475    0.005 base_events.py:1922(_run_once)
+     4727    0.030    0.000    0.030    0.000 encoder.py:205(iterencode)
+      613    0.029    0.000    0.029    0.000 {method 'WSASend' of '_overlapped.Overlapped' objects}
+   150612    0.029    0.000    0.029    0.000 {built-in method builtins.getattr}
+    11002    0.029    0.000    0.029    0.000 {method 'decompress' of 'zlib.Decompress' objects}
+    11000    0.028    0.000    0.096    0.000 decoder.py:333(decode)
+    11010    0.028    0.000    0.065    0.000 permessage_deflate.py:92(decode)
+    57454    0.027    0.000    0.047    0.000 metrics.py:73(_raise_if_not_observable)
+   114931    0.026    0.000    0.026    0.000 {method '__exit__' of '_thread.lock' objects}
+    19360    0.025    0.000    0.032    0.000 coinbase.py:138(<genexpr>)
+    11000    0.025    0.000    0.675    0.000 orderbook.py:239(eligible_books)
+    12230    0.024    0.000    0.039    0.000 copy.py:118(deepcopy)
+   118041    0.024    0.000    0.026    0.000 {built-in method builtins.isinstance}
+    22006    0.023    0.000    0.058    0.000 metrics.py:460(set)
+     9680    0.023    0.000    0.187    0.000 coinbase.py:118(_combine_product_events)
+    24448    0.023    0.000    0.069    0.000 metrics.py:337(inc)
+    11054    0.022    0.000    0.022    0.000 types.py:51(as_payload)
+    11000    0.022    0.000    0.070    0.000 perf_backend.py:49(detect_for_pair)
+    11000    0.022    0.000    0.052    0.000 metrics.py:667(observe)
+    57454    0.020    0.000    0.020    0.000 metrics.py:67(_is_observable)
+     4728    0.019    0.000    0.182    0.000 websockets_sansio_impl.py:432(send)
+    11000    0.019    0.000    0.082    0.000 orderbook.py:293(_apply_delta)
+     4732    0.018    0.000    0.096    0.000 frames.py:315(serialize)
+
+
+         3497816 function calls (3453541 primitive calls) in 11.382 seconds
+
+   Ordered by: cumulative time
+   List reduced from 787 to 50 due to restriction <50>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     3019    0.031    0.000   14.475    0.005 base_events.py:1922(_run_once)
+     3019    0.004    0.000    8.145    0.003 windows_events.py:443(select)
+     3019    0.042    0.000    8.139    0.003 windows_events.py:761(_poll)
+     4044    7.979    0.002    8.077    0.002 {built-in method _overlapped.GetQueuedCompletionStatus}
+     4441    0.007    0.000    6.232    0.001 events.py:86(_run)
+     4441    0.018    0.000    5.955    0.001 {method 'run' of '_contextvars.Context' objects}
+      894    0.068    0.000    2.942    0.003 perf_backend.py:109(consume)
+    11000    0.183    0.000    2.153    0.000 main.py:81(process_market_event)
+      913    0.003    0.000    1.139    0.001 proactor_events.py:376(_loop_writing)
+       39    0.000    0.000    1.037    0.027 h11_impl.py:414(run_asgi)
+    11894    0.010    0.000    0.841    0.000 base.py:117(connect)
+    10574    0.052    0.000    0.772    0.000 base.py:102(stream_events)
+    11000    0.025    0.000    0.675    0.000 orderbook.py:239(eligible_books)
+    33000    0.037    0.000    0.648    0.000 orderbook.py:232(eligible_top_of_book)
+    88270    0.198    0.000    0.609    0.000 orderbook.py:163(top_of_book)
+      613    0.003    0.000    0.554    0.001 windows_events.py:538(send)
+    44216    0.113    0.000    0.542    0.000 orderbook.py:182(eligibility)
+     9680    0.099    0.000    0.440    0.000 coinbase.py:52(parse_message)
+    11000    0.061    0.000    0.291    0.000 orderbook.py:114(apply)
+      298    0.008    0.000    0.280    0.001 api.py:107(_send_messages)
+     4724    0.009    0.000    0.258    0.000 websockets.py:171(send_json)
+    46446    0.162    0.000    0.249    0.000 metrics.py:138(labels)
+      374    0.003    0.000    0.248    0.001 proactor_events.py:276(_loop_reading)
+   176540    0.146    0.000    0.242    0.000 orderbook.py:50(best)
+      368    0.001    0.000    0.239    0.001 proactor_events.py:251(_data_received)
+      337    0.004    0.000    0.229    0.001 connection.py:1082(data_received)
+4804/4766    0.005    0.000    0.195    0.000 _exception_handler.py:34(sender)
+     4728    0.006    0.000    0.193    0.000 websockets.py:59(send)
+     9680    0.023    0.000    0.187    0.000 coinbase.py:118(_combine_product_events)
+     4728    0.019    0.000    0.182    0.000 websockets_sansio_impl.py:432(send)
+      343    0.001    0.000    0.177    0.001 protocol.py:257(receive_data)
+  347/345    0.000    0.000    0.176    0.001 {built-in method builtins.next}
+      337    0.001    0.000    0.175    0.001 client.py:301(parse)
+      345    0.017    0.000    0.171    0.000 protocol.py:562(parse)
+     9680    0.065    0.000    0.162    0.000 coinbase.py:131(_build_event)
+    11010    0.047    0.000    0.156    0.000 frames.py:241(parse)
+     2446    0.017    0.000    0.147    0.000 types.py:76(as_payload)
+    10340    0.077    0.000    0.137    0.000 dataclasses.py:1540(replace)
+     2446    0.003    0.000    0.127    0.000 dataclasses.py:1308(asdict)
+    24446    0.047    0.000    0.126    0.000 api.py:87(broadcast)
+24460/2446    0.047    0.000    0.122    0.000 dataclasses.py:1332(_asdict_inner)
+    11000    0.017    0.000    0.121    0.000 __init__.py:299(loads)
+     4724    0.007    0.000    0.112    0.000 protocol.py:318(send_text)
+       44    0.001    0.000    0.112    0.003 proactor_events.py:792(_loop_self_reading)
+    11269    0.010    0.000    0.111    0.000 connection.py:223(__aiter__)
+     4732    0.006    0.000    0.103    0.000 protocol.py:753(send_frame)
+    11269    0.011    0.000    0.101    0.000 connection.py:250(recv)
+    11000    0.028    0.000    0.096    0.000 decoder.py:333(decode)
+     4732    0.018    0.000    0.096    0.000 frames.py:315(serialize)
+    11269    0.035    0.000    0.090    0.000 messages.py:127(get)
+
+

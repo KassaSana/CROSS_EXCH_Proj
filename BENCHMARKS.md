@@ -54,6 +54,14 @@ Notes:
 
 Raw persisted results live in [benchmarks/results.json](benchmarks/results.json).
 
+## Connected-dashboard burst profiling
+
+For process CPU/RSS, receive-to-detection and sender-to-detection p95/p99,
+queue drops, browser frame/long-task measurements, and separate Python/React
+profiles, see [the connected-dashboard investigation](benchmarks/performance/README.md).
+This exercises the production handler and an actual production-built React
+dashboard; the older synthetic benchmark above does not include those paths.
+
 The current verification summary and remaining live-soak gap are tracked in
 [docs/VALIDATION.md](docs/VALIDATION.md).
 
