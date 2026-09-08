@@ -16,3 +16,6 @@ htmlcov/
 *.tsbuildinfo
 *.sqlite3
 benchmarks/*.log
+.tmp/
+dashboard/dist-perf/
+benchmarks/performance/raw/
