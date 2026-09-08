@@ -16,6 +16,7 @@ import { AdapterStatusBanner } from "../components/AdapterStatus";
 import { LiveSpreads } from "../components/LiveSpreads";
 import { OpportunityFeed } from "../components/OpportunityFeed";
 import { StatsCards } from "../components/StatsCards";
+import { RenderProfile } from "../components/RenderProfile";
 import { useWebSocket } from "../hooks/useWebSocket";
 
 type LivePayload =
@@ -59,6 +60,29 @@ export default function Dashboard() {
   const [books, setBooks] = useState<Record<string, TopOfBook>>({});
   const [adapters, setAdapters] = useState<AdapterStatus[]>([]);
   const [bookStatuses, setBookStatuses] = useState<Record<string, BookStatus>>({});
+  const pending = useRef({
+    books: {} as Record<string, TopOfBook>,
+    statuses: {} as Record<string, BookStatus>,
+    opportunities: [] as Opportunity[],
+  });
+
+  useEffect(() => {
+    // The detector still processes every event. Only visual updates are batched.
+    const timer = window.setInterval(() => {
+      const batch = pending.current;
+      pending.current = { books: {}, statuses: {}, opportunities: [] };
+      if (Object.keys(batch.books).length) {
+        setBooks((current) => ({ ...current, ...batch.books }));
+      }
+      if (Object.keys(batch.statuses).length) {
+        setBookStatuses((current) => ({ ...current, ...batch.statuses }));
+      }
+      if (batch.opportunities.length) {
+        setOpportunities((current) => mergeOpportunities(current, batch.opportunities));
+      }
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     fetchRecentOpportunities().then((fetched) => {
@@ -70,6 +94,13 @@ export default function Dashboard() {
       fetchAdapterStatus().then(setAdapters).catch(() => setAdapters([]));
       fetchBookStatus()
         .then((statuses) => {
+          for (const status of statuses) {
+            if (!status.eligible) {
+              const key = `${status.exchange}:${status.pair}`;
+              delete pending.current.books[key];
+              delete pending.current.statuses[key];
+            }
+          }
           setBookStatuses(Object.fromEntries(
             statuses.map((status) => [`${status.exchange}:${status.pair}`, status]),
           ));
@@ -91,6 +122,7 @@ export default function Dashboard() {
     const message = JSON.parse(event.data) as LiveEnvelope;
     if (lastStreamMessage.current.connectionId !== connectionId) {
       lastStreamMessage.current = { connectionId, sequence: 0 };
+      pending.current = { books: {}, statuses: {}, opportunities: [] };
     }
     if (message.stream_sequence <= lastStreamMessage.current.sequence) {
       return;
@@ -98,6 +130,8 @@ export default function Dashboard() {
     lastStreamMessage.current.sequence = message.stream_sequence;
 
     if (message.type === "state_snapshot") {
+      pending.current.books = {};
+      pending.current.statuses = {};
       setBooks(Object.fromEntries(
         message.payload.books.map((book) => [`${book.exchange}:${book.pair}`, book]),
       ));
@@ -109,18 +143,23 @@ export default function Dashboard() {
       ));
     }
     if (message.type === "opportunity") {
-      setOpportunities((current) => mergeOpportunities([message.payload], current));
+      pending.current.opportunities.push(message.payload);
+      // Keep memory bounded even when a background tab throttles its timer.
+      if (pending.current.opportunities.length >= 100) {
+        pending.current.opportunities = mergeOpportunities([], pending.current.opportunities);
+      }
     }
     if (message.type === "top_of_book") {
-      setBooks((current) => ({
-        ...current,
-        [`${message.payload.exchange}:${message.payload.pair}`]: message.payload,
-      }));
+      pending.current.books[`${message.payload.exchange}:${message.payload.pair}`] = message.payload;
     }
     if (message.type === "book_status") {
       const key = `${message.payload.exchange}:${message.payload.pair}`;
-      setBookStatuses((current) => ({ ...current, [key]: message.payload }));
+      pending.current.statuses[key] = message.payload;
       if (!message.payload.eligible) {
+        // Invalid books disappear immediately and cannot be restored by an
+        // older buffered quote on the next visual update.
+        delete pending.current.books[key];
+        setBookStatuses((current) => ({ ...current, [key]: message.payload }));
         setBooks((current) => Object.fromEntries(
           Object.entries(current).filter(([bookKey]) => bookKey !== key),
         ));
@@ -151,14 +190,14 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <AdapterStatusBanner
+      <RenderProfile id="AdapterStatus"><AdapterStatusBanner
         adapters={adapters}
         books={displayedBookStatuses}
         connectionStatus={websocket.status}
-      />
-      <StatsCards stats={stats} />
-      <LiveSpreads pairs={pairs} books={displayedBooks} />
-      <OpportunityFeed opportunities={opportunities} />
+      /></RenderProfile>
+      <RenderProfile id="StatsCards"><StatsCards stats={stats} /></RenderProfile>
+      <RenderProfile id="LiveSpreads"><LiveSpreads pairs={pairs} books={displayedBooks} /></RenderProfile>
+      <RenderProfile id="OpportunityFeed"><OpportunityFeed opportunities={opportunities} /></RenderProfile>
     </div>
   );
 }

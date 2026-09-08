@@ -1,10 +1,11 @@
+import { memo } from "react";
 import { Opportunity } from "../api/client";
 
 type Props = {
   opportunities: Opportunity[];
 };
 
-export function OpportunityFeed({ opportunities }: Props) {
+export const OpportunityFeed = memo(function OpportunityFeed({ opportunities }: Props) {
   return (
     <section className="rounded-[2rem] border border-stone-300 bg-white/70 p-6 shadow-sm">
       <div className="flex items-center justify-between">
@@ -13,7 +14,7 @@ export function OpportunityFeed({ opportunities }: Props) {
       </div>
       <div className="mt-5 space-y-3">
         {opportunities.map((opportunity) => (
-          <div key={`${opportunity.timestamp_ns}-${opportunity.buy_exchange}-${opportunity.sell_exchange}`} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+          <div key={`${opportunity.timestamp_ns}-${opportunity.pair}-${opportunity.buy_exchange}-${opportunity.sell_exchange}`} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
             <div className="flex items-center justify-between">
               <strong>{opportunity.pair}</strong>
               <span className="text-sm text-emerald-700">{opportunity.spread_pct}%</span>
@@ -27,4 +28,4 @@ export function OpportunityFeed({ opportunities }: Props) {
       </div>
     </section>
   );
-}
+});

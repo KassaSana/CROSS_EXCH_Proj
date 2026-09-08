@@ -1,10 +1,11 @@
+import { memo } from "react";
 import { Stats } from "../api/client";
 
 type Props = {
   stats: Stats | null;
 };
 
-export function StatsCards({ stats }: Props) {
+export const StatsCards = memo(function StatsCards({ stats }: Props) {
   const items = [
     { label: "Opportunities / Hour", value: stats?.count ?? "..." },
     { label: "Max Spread %", value: stats?.max_spread_pct ?? "..." },
@@ -21,4 +22,4 @@ export function StatsCards({ stats }: Props) {
       ))}
     </section>
   );
-}
+});

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { PairRecord, TopOfBook } from "../api/client";
 
 type Props = {
@@ -17,7 +18,7 @@ function spreadText(entries: TopOfBook[]): string {
   return (((bestBid - bestAsk) / bestAsk) * 100).toFixed(3);
 }
 
-export function LiveSpreads({ pairs, books }: Props) {
+export const LiveSpreads = memo(function LiveSpreads({ pairs, books }: Props) {
   const grouped = pairs.reduce<Record<string, TopOfBook[]>>((acc, pair) => {
     const key = `${pair.exchange}:${pair.pair}`;
     const book = books[key];
@@ -55,7 +56,7 @@ export function LiveSpreads({ pairs, books }: Props) {
                   <td className="py-4">{entries.map((entry) => entry.exchange).join(", ") || "--"}</td>
                   <td className="py-4">
                     {entries.map((entry) => (
-                      <div key={`${entry.exchange}-${entry.sequence}`} className="text-stone-600">
+                      <div key={entry.exchange} className="text-stone-600">
                         {entry.exchange}: {entry.best_bid_price} / {entry.best_ask_price}
                       </div>
                     ))}
@@ -69,4 +70,4 @@ export function LiveSpreads({ pairs, books }: Props) {
       </div>
     </section>
   );
-}
+});
