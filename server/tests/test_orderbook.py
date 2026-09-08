@@ -289,3 +289,34 @@ def test_disconnect_invalidates_book_until_new_snapshot() -> None:
     )
     assert snapshot.accepted is True
     assert manager.eligibility("gemini", "BTC-USD").eligible is True
+
+
+def test_cached_top_tracks_size_updates_deletions_gaps_and_recovery() -> None:
+    manager = OrderBookManager(clock=lambda: 1_000)
+
+    def event(kind, sequence, bids=(), asks=()):
+        return MarketEvent(
+            "gemini",
+            "BTC-USD",
+            kind,
+            sequence,
+            sequence,
+            bids=tuple(PriceLevel(Decimal(p), Decimal(s)) for p, s in bids),
+            asks=tuple(PriceLevel(Decimal(p), Decimal(s)) for p, s in asks),
+        )
+
+    manager.apply(event(EventKind.SNAPSHOT, 1, [("100", "1"), ("99", "2")], [("101", "3")]))
+    original = manager.top_of_book("gemini", "BTC-USD")
+    manager.apply(event(EventKind.DELTA, 2, [("100", "4")]))
+    updated = manager.top_of_book("gemini", "BTC-USD")
+    assert updated.best_bid_size == Decimal("4")
+    assert updated.sequence == 2
+    assert original.best_bid_size == Decimal("1")
+    manager.apply(event(EventKind.DELTA, 3, [("100", "0")]))
+    assert manager.top_of_book("gemini", "BTC-USD").best_bid_price == Decimal("99")
+    manager.apply(event(EventKind.DELTA, 5, [("98", "1")]))
+    assert manager.top_of_book("gemini", "BTC-USD") is None
+    manager.apply(event(EventKind.SNAPSHOT, 10, [("90", "1")], [("91", "1")]))
+    assert manager.top_of_book("gemini", "BTC-USD").best_bid_price == Decimal("90")
+    manager.set_exchange_connected("gemini", False)
+    assert manager.top_of_book("gemini", "BTC-USD") is None

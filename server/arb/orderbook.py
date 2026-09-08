@@ -30,7 +30,7 @@ class SortedLevels:
         self._sizes.clear()
 
     def set_level(self, price: Decimal, size: Decimal) -> None:
-        if size <= Decimal("0"):
+        if size <= 0:
             self.remove(price)
             return
 
@@ -72,6 +72,7 @@ class OrderBook:
     continuous: bool = False
     connected: bool = True
     last_received_monotonic_ns: int | None = None
+    cached_top: TopOfBook | None = None
 
     def clear(self) -> None:
         self.bids.clear()
@@ -82,6 +83,7 @@ class OrderBook:
         self.initialized = False
         self.continuous = False
         self.last_received_monotonic_ns = None
+        self.cached_top = None
 
 
 class OrderBookManager:
@@ -115,7 +117,9 @@ class OrderBookManager:
         self, event: MarketEvent, received_monotonic_ns: int | None = None
     ) -> BookUpdateResult:
         key = (event.exchange, event.pair)
-        book = self._books.setdefault(key, OrderBook())
+        book = self._books.get(key)
+        if book is None:
+            book = self._books[key] = OrderBook()
         book.connected = self._exchange_connected.get(event.exchange, True)
         received_at = self._clock() if received_monotonic_ns is None else received_monotonic_ns
 
@@ -164,11 +168,13 @@ class OrderBookManager:
         book = self._books.get((exchange, pair))
         if not book or book.stale or book.sequence is None:
             return None
+        if book.cached_top is not None:
+            return book.cached_top
         best_bid = book.bids.best()
         best_ask = book.asks.best()
         if best_bid is None or best_ask is None:
             return None
-        return TopOfBook(
+        book.cached_top = TopOfBook(
             exchange=exchange,
             pair=pair,
             best_bid_price=best_bid.price,
@@ -178,6 +184,7 @@ class OrderBookManager:
             sequence=book.sequence,
             timestamp_ns=book.last_timestamp_ns,
         )
+        return book.cached_top
 
     def eligibility(
         self, exchange: str, pair: str, now_monotonic_ns: int | None = None
@@ -291,6 +298,7 @@ class OrderBookManager:
         book.last_received_monotonic_ns = received_monotonic_ns
 
     def _apply_delta(self, book: OrderBook, event: MarketEvent, received_monotonic_ns: int) -> None:
+        book.cached_top = None
         for level in event.bids:
             book.bids.set_level(level.price, level.size)
         for level in event.asks:

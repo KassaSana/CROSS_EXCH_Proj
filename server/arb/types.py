@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
 from typing import Literal
@@ -74,10 +74,16 @@ class ArbitrageOpportunity:
     theoretical_profit_usd: Decimal
 
     def as_payload(self) -> dict[str, object]:
-        payload = asdict(self)
         return {
-            key: str(value) if isinstance(value, Decimal) or key == "timestamp_ns" else value
-            for key, value in payload.items()
+            "timestamp_ns": str(self.timestamp_ns),
+            "pair": self.pair,
+            "buy_exchange": self.buy_exchange,
+            "sell_exchange": self.sell_exchange,
+            "buy_price": str(self.buy_price),
+            "sell_price": str(self.sell_price),
+            "spread_pct": str(self.spread_pct),
+            "max_size": str(self.max_size),
+            "theoretical_profit_usd": str(self.theoretical_profit_usd),
         }
 
 
