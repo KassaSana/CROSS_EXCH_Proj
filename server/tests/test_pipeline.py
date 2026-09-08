@@ -21,6 +21,30 @@ def snapshot(exchange: str, bid: str = "100", ask: str = "101") -> MarketEvent:
     )
 
 
+class RecordingBroadcaster:
+    """Records deliveries in order across the immediate and coalesced paths.
+
+    Book updates and opportunities reach the dashboard through different
+    broadcaster methods, so a single ordered log is what the pipeline's
+    delivery contract is actually about.
+    """
+
+    def __init__(self) -> None:
+        self.messages: list[LiveMessage] = []
+        self.books: list[tuple[str, str, LiveMessage]] = []
+
+    async def broadcast(self, message: LiveMessage) -> None:
+        self.messages.append(message)
+
+    async def broadcast_book(self, exchange: str, pair: str, message: LiveMessage) -> None:
+        self.books.append((exchange, pair, message))
+        self.messages.append(message)
+
+    async def broadcast_book_now(self, exchange: str, pair: str, message: LiveMessage) -> None:
+        self.books.append((exchange, pair, message))
+        self.messages.append(message)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enqueue_accepted", [True, False])
 async def test_processing_order_and_payloads(monkeypatch, enqueue_accepted) -> None:
@@ -32,7 +56,7 @@ async def test_processing_order_and_payloads(monkeypatch, enqueue_accepted) -> N
     books = Mock(wraps=manager)
     detection = Mock(wraps=detector)
     store = Mock(enqueue=AsyncMock(return_value=enqueue_accepted))
-    broadcaster = Mock(broadcast=AsyncMock())
+    broadcaster = RecordingBroadcaster()
     for name in (
         "book_eligible",
         "events_ingested_total",
@@ -65,11 +89,13 @@ async def test_processing_order_and_payloads(monkeypatch, enqueue_accepted) -> N
     books.apply.assert_called_once_with(event, received_monotonic_ns=123)
     detection.detect_for_pair.assert_called_once_with("BTC-USD", pair_books, 123)
     assert store.enqueue.await_count == 3
-    assert broadcaster.broadcast.await_count == 5
-    assert broadcaster.broadcast.await_args_list[0].args == (
-        LiveMessage("top_of_book", pair_books[0].as_payload()),
-    )
-    assert broadcaster.broadcast.await_args_list[1].args[0].type == "book_status"
+    assert len(broadcaster.messages) == 5
+    assert broadcaster.messages[0] == LiveMessage("top_of_book", pair_books[0].as_payload())
+    assert broadcaster.messages[1].type == "book_status"
+    assert [message.type for message in broadcaster.messages[2:]] == ["opportunity"] * 3
+    assert [(exchange, pair) for exchange, pair, _ in broadcaster.books] == [
+        ("gemini", "BTC-USD")
+    ] * 2
 
 
 @pytest.mark.asyncio
@@ -78,7 +104,7 @@ async def test_rejected_or_incomplete_event_stops_before_delivery(kind) -> None:
     event = MarketEvent("gemini", "BTC-USD", kind, 1, 1)
     detector = Mock()
     store = Mock(enqueue=AsyncMock())
-    broadcaster = Mock(broadcast=AsyncMock())
+    broadcaster = RecordingBroadcaster()
 
     await main.process_market_event(
         event,
@@ -90,8 +116,8 @@ async def test_rejected_or_incomplete_event_stops_before_delivery(kind) -> None:
 
     detector.detect_for_pair.assert_not_called()
     store.enqueue.assert_not_awaited()
-    broadcaster.broadcast.assert_awaited_once()
-    status_message = broadcaster.broadcast.await_args.args[0]
+    assert len(broadcaster.messages) == 1
+    status_message = broadcaster.messages[0]
     assert status_message.type == "book_status"
     assert status_message.payload["eligible"] is False
 
@@ -103,7 +129,7 @@ async def test_no_opportunity_still_broadcasts_book(second_exchange) -> None:
     if second_exchange:
         manager.apply(snapshot("coinbase"))
     store = Mock(enqueue=AsyncMock())
-    broadcaster = Mock(broadcast=AsyncMock())
+    broadcaster = RecordingBroadcaster()
 
     await main.process_market_event(
         snapshot("gemini"),
@@ -114,10 +140,11 @@ async def test_no_opportunity_still_broadcasts_book(second_exchange) -> None:
     )
 
     store.enqueue.assert_not_awaited()
-    broadcaster.broadcast.assert_any_await(
+    assert (
         LiveMessage("top_of_book", manager.top_of_book("gemini", "BTC-USD").as_payload())
+        in broadcaster.messages
     )
-    assert broadcaster.broadcast.await_count == 2
+    assert len(broadcaster.messages) == 2
 
 
 @pytest.mark.asyncio
@@ -167,7 +194,7 @@ async def test_consumer_continues_after_rejected_event() -> None:
 
     adapter = Mock()
     adapter.connect.return_value = events()
-    broadcaster = Mock(broadcast=AsyncMock())
+    broadcaster = RecordingBroadcaster()
     manager = OrderBookManager()
     await main.consume_adapter(
         adapter,
@@ -177,10 +204,11 @@ async def test_consumer_continues_after_rejected_event() -> None:
         broadcaster=broadcaster,
     )
 
-    broadcaster.broadcast.assert_any_await(
+    assert (
         LiveMessage("top_of_book", manager.top_of_book("gemini", "BTC-USD").as_payload())
+        in broadcaster.messages
     )
-    assert broadcaster.broadcast.await_count == 3
+    assert len(broadcaster.messages) == 3
 
 
 @pytest.mark.asyncio
@@ -212,7 +240,7 @@ async def test_event_receipt_time_drives_freshness(monkeypatch) -> None:
         book_manager=manager,
         detector=ArbitrageDetector(Decimal("0.1")),
         store=Mock(enqueue=AsyncMock()),
-        broadcaster=Mock(broadcast=AsyncMock()),
+        broadcaster=RecordingBroadcaster(),
     )
 
     assert manager.eligibility("gemini", "BTC-USD", 9_000).age_ns == 8_000
@@ -239,7 +267,7 @@ async def test_processing_delay_can_make_received_event_ineligible(monkeypatch) 
         "opportunities_total",
     ):
         monkeypatch.setattr(main, name, Mock())
-    broadcaster = Mock(broadcast=AsyncMock())
+    broadcaster = RecordingBroadcaster()
     detector = Mock()
 
     await main.process_market_event(
@@ -251,8 +279,8 @@ async def test_processing_delay_can_make_received_event_ineligible(monkeypatch) 
     )
 
     detector.detect_for_pair.assert_not_called()
-    broadcaster.broadcast.assert_awaited_once()
-    message = broadcaster.broadcast.await_args.args[0]
+    assert len(broadcaster.messages) == 1
+    message = broadcaster.messages[0]
     assert message.type == "book_status"
     assert message.payload["reason"] == "too_old"
 
@@ -297,3 +325,47 @@ async def test_background_task_supervisor_ignores_shutdown_cancellation() -> Non
     await asyncio.sleep(0)
 
     assert supervisor.failures() == []
+
+
+@pytest.mark.asyncio
+async def test_buffered_burst_allows_dashboard_sender_to_drain() -> None:
+    class Socket:
+        def __init__(self):
+            self.sent = []
+            self.closed = False
+
+        async def accept(self):
+            pass
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+
+        async def close(self, code=1000, reason=None):
+            self.closed = True
+
+    socket = Socket()
+    broadcaster = main.LiveBroadcaster(queue_maxsize=8)
+    await broadcaster.connect(socket)
+    manager = OrderBookManager()
+    detector = ArbitrageDetector(Decimal("0.1"))
+    for _ in range(100):
+        await main.process_market_event(
+            snapshot("gemini"),
+            book_manager=manager,
+            detector=detector,
+            store=Mock(enqueue=AsyncMock()),
+            broadcaster=broadcaster,
+        )
+    await broadcaster.flush()
+    await asyncio.sleep(0)
+
+    # Coalescing bounds a burst by book count, not event count, so the queue
+    # cannot overflow and the client survives with the newest state.
+    assert not socket.closed
+    assert len(socket.sent) <= 8
+    types = [payload["type"] for payload in socket.sent]
+    assert "top_of_book" in types and "book_status" in types
+    top = [payload for payload in socket.sent if payload["type"] == "top_of_book"][-1]
+    assert top["payload"] == manager.top_of_book("gemini", "BTC-USD").as_payload()
+    await broadcaster.aclose()
+    await broadcaster.disconnect(socket)

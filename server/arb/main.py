@@ -98,7 +98,9 @@ async def process_market_event(
     status = book_manager.eligibility(event.exchange, event.pair, eligibility_checked_ns)
     if not result.accepted or result.top_of_book is None:
         book_eligible.labels(exchange=event.exchange, pair=event.pair).set(0)
-        await broadcaster.broadcast(LiveMessage(type="book_status", payload=status.as_payload()))
+        await broadcaster.broadcast_book_now(
+            event.exchange, event.pair, LiveMessage(type="book_status", payload=status.as_payload())
+        )
         return
 
     book_updates_total.labels(exchange=event.exchange, pair=event.pair).inc()
@@ -108,13 +110,19 @@ async def process_market_event(
         )
     book_eligible.labels(exchange=event.exchange, pair=event.pair).set(1 if status.eligible else 0)
     if not status.eligible:
-        await broadcaster.broadcast(LiveMessage(type="book_status", payload=status.as_payload()))
+        await broadcaster.broadcast_book_now(
+            event.exchange, event.pair, LiveMessage(type="book_status", payload=status.as_payload())
+        )
         return
 
-    await broadcaster.broadcast(
-        LiveMessage(type="top_of_book", payload=result.top_of_book.as_payload())
+    await broadcaster.broadcast_book(
+        event.exchange,
+        event.pair,
+        LiveMessage(type="top_of_book", payload=result.top_of_book.as_payload()),
     )
-    await broadcaster.broadcast(LiveMessage(type="book_status", payload=status.as_payload()))
+    await broadcaster.broadcast_book(
+        event.exchange, event.pair, LiveMessage(type="book_status", payload=status.as_payload())
+    )
     pair_books = book_manager.eligible_books(
         event.pair, ("gemini", "coinbase", "binance"), eligibility_checked_ns
     )
@@ -127,6 +135,10 @@ async def process_market_event(
         await broadcaster.broadcast(
             LiveMessage(type="opportunity", payload=opportunity.as_payload())
         )
+    # Buffered socket reads and put_nowait-based delivery may otherwise run a
+    # whole burst without yielding. Let senders and persistence drain their
+    # bounded queues before consuming another update.
+    await asyncio.sleep(0)
 
 
 async def consume_adapter(
@@ -174,8 +186,10 @@ async def run_pipeline() -> None:
             book_eligible.labels(exchange=status.exchange, pair=status.pair).set(
                 1 if status.eligible else 0
             )
-            await broadcaster.broadcast(
-                LiveMessage(type="book_status", payload=status.as_payload())
+            await broadcaster.broadcast_book_now(
+                status.exchange,
+                status.pair,
+                LiveMessage(type="book_status", payload=status.as_payload()),
             )
 
     for adapter in adapters:
@@ -236,6 +250,7 @@ async def run_pipeline() -> None:
         for task in adapter_tasks:
             task.cancel()
         reconcile_task.cancel()
+        await broadcaster.aclose()
         await asyncio.gather(
             *adapter_tasks,
             reconcile_task,
