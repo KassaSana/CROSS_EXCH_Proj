@@ -1,73 +1,201 @@
-import { memo } from "react";
-import { PairRecord, TopOfBook } from "../api/client";
+import { BookStatus, PairRecord, TopOfBook } from "../api/client";
+import { age, DASH, nsToMs, price, spreadPct } from "../lib/format";
+import { Panel } from "./Panel";
 
 type Props = {
   pairs: PairRecord[];
   books: Record<string, TopOfBook>;
+  statuses: Record<string, BookStatus>;
+  nowMs: number;
+  feedLive: boolean;
 };
 
-function spreadText(entries: TopOfBook[]): string {
-  if (entries.length < 2) {
-    return "--";
-  }
-  const bestBid = Math.max(...entries.map((entry) => Number(entry.best_bid_price)));
-  const bestAsk = Math.min(...entries.map((entry) => Number(entry.best_ask_price)));
-  if (bestBid <= bestAsk) {
-    return "--";
-  }
-  return (((bestBid - bestAsk) / bestAsk) * 100).toFixed(3);
+const STALE_AFTER_MS = 5_000;
+
+type Venue = {
+  exchange: string;
+  eligible: boolean;
+};
+
+type Row = {
+  pair: string;
+  entries: TopOfBook[];
+  venues: Venue[];
+  bestBid: number | null;
+  bestAsk: number | null;
+  spread: number | null;
+  oldestAgeMs: number | null;
+};
+
+const VENUE_CODE: Record<string, string> = {
+  binance: "BIN",
+  coinbase: "CBS",
+  gemini: "GEM",
+};
+
+function venueCode(exchange: string): string {
+  return VENUE_CODE[exchange] ?? exchange.slice(0, 3).toUpperCase();
 }
 
-export const LiveSpreads = memo(function LiveSpreads({ pairs, books }: Props) {
-  const grouped = pairs.reduce<Record<string, TopOfBook[]>>((acc, pair) => {
-    const key = `${pair.exchange}:${pair.pair}`;
+function emptyRow(pair: string): Row {
+  return {
+    pair,
+    entries: [],
+    venues: [],
+    bestBid: null,
+    bestAsk: null,
+    spread: null,
+    oldestAgeMs: null,
+  };
+}
+
+function buildRows(
+  pairs: PairRecord[],
+  books: Record<string, TopOfBook>,
+  statuses: Record<string, BookStatus>,
+  nowMs: number,
+): Row[] {
+  const byPair = new Map<string, Row>();
+
+  for (const record of pairs) {
+    const row = byPair.get(record.pair) ?? emptyRow(record.pair);
+
+    const key = `${record.exchange}:${record.pair}`;
+    row.venues.push({
+      exchange: record.exchange,
+      eligible: statuses[key]?.eligible === true,
+    });
     const book = books[key];
-    if (!acc[pair.pair]) {
-      acc[pair.pair] = [];
+    if (book !== undefined) {
+      row.entries.push(book);
     }
-    if (book) {
-      acc[pair.pair].push(book);
+    byPair.set(record.pair, row);
+  }
+
+  for (const row of byPair.values()) {
+    if (row.entries.length > 0) {
+      row.oldestAgeMs = Math.max(
+        ...row.entries.map((entry) => nowMs - nsToMs(entry.timestamp_ns)),
+      );
     }
-    return acc;
-  }, {});
+    if (row.entries.length >= 2) {
+      const bid = Math.max(...row.entries.map((entry) => Number(entry.best_bid_price)));
+      const ask = Math.min(...row.entries.map((entry) => Number(entry.best_ask_price)));
+      row.bestBid = bid;
+      row.bestAsk = ask;
+      row.spread = bid > ask ? ((bid - ask) / ask) * 100 : null;
+    }
+  }
+
+  return [...byPair.values()].sort(
+    (left, right) =>
+      (right.spread ?? -1) - (left.spread ?? -1) || left.pair.localeCompare(right.pair),
+  );
+}
+
+/** Magnitude is sequential: brighter green means a wider spread, nothing else. */
+function spreadTone(spread: number | null): string {
+  if (spread === null) {
+    return "text-ink-3";
+  }
+  if (spread >= 0.25) {
+    return "text-signal-hi";
+  }
+  if (spread >= 0.1) {
+    return "text-signal";
+  }
+  return "text-ink-2";
+}
+
+export function LiveSpreads({ pairs, books, statuses, nowMs, feedLive }: Props) {
+  const rows = buildRows(pairs, books, statuses, nowMs);
 
   return (
-    <section className="rounded-[2rem] border border-stone-300 bg-white/70 p-6 shadow-sm">
-      <div className="flex items-center justify-between">
-        <h2 className="font-display text-2xl text-ink">Live Spreads</h2>
-        <p className="text-sm text-stone-500">Cross-venue top-of-book comparison</p>
-      </div>
-      <div className="mt-5 overflow-x-auto">
-        <table className="min-w-full text-left text-sm">
-          <thead className="text-stone-500">
-            <tr>
-              <th className="pb-3">Pair</th>
-              <th className="pb-3">Venues</th>
-              <th className="pb-3">Best Bid / Ask</th>
-              <th className="pb-3">Spread %</th>
+    <Panel
+      title="Live spreads"
+      meta={`${rows.length} pairs · cross-venue top of book`}
+      className="overflow-hidden"
+    >
+      <div className="overflow-x-auto">
+        <table className="min-w-full border-collapse text-xs">
+          <caption className="sr-only">
+            Best bid and ask across venues for each tracked pair, with the resulting
+            cross-exchange spread and the age of the oldest contributing book.
+          </caption>
+          <thead>
+            <tr className="border-b border-line-soft text-left text-micro text-ink-3">
+              <th scope="col" className="px-4 py-2 font-normal">
+                Pair
+              </th>
+              <th scope="col" className="px-4 py-2 font-normal">
+                Venues
+              </th>
+              <th scope="col" className="px-4 py-2 text-right font-normal">
+                Best bid
+              </th>
+              <th scope="col" className="px-4 py-2 text-right font-normal">
+                Best ask
+              </th>
+              <th scope="col" className="px-4 py-2 text-right font-normal">
+                Spread
+              </th>
+              <th scope="col" className="px-4 py-2 text-right font-normal">
+                Age
+              </th>
             </tr>
           </thead>
           <tbody>
-            {Object.entries(grouped).map(([pair, entries]) => {
-              const spread = spreadText(entries);
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-6 text-ink-3">
+                  Waiting for the first book snapshot.
+                </td>
+              </tr>
+            ) : null}
+            {rows.map((row) => {
+              const stale =
+                !feedLive || (row.oldestAgeMs !== null && row.oldestAgeMs > STALE_AFTER_MS);
               return (
-                <tr key={pair} className="border-t border-stone-200 align-top">
-                  <td className="py-4 font-medium text-ink">{pair}</td>
-                  <td className="py-4">{entries.map((entry) => entry.exchange).join(", ") || "--"}</td>
-                  <td className="py-4">
-                    {entries.map((entry) => (
-                      <div key={entry.exchange} className="text-stone-600">
-                        {entry.exchange}: {entry.best_bid_price} / {entry.best_ask_price}
-                      </div>
-                    ))}
+                <tr
+                  key={row.pair}
+                  className={`border-b border-line-soft/60 last:border-0 ${
+                    stale ? "opacity-45" : ""
+                  }`}
+                >
+                  <th scope="row" className="px-4 py-1.5 text-left font-medium text-ink">
+                    {row.pair}
+                  </th>
+                  <td className="px-4 py-1.5">
+                    <span className="num flex gap-2">
+                      {row.venues.map((venue) => (
+                        <span
+                          key={venue.exchange}
+                          className={venue.eligible ? "text-ink-3" : "text-warn"}
+                          title={`${venue.exchange}: ${
+                            venue.eligible ? "eligible" : "not contributing"
+                          }`}
+                        >
+                          {venueCode(venue.exchange)}
+                        </span>
+                      ))}
+                    </span>
                   </td>
-                  <td className={`py-4 ${spread !== "--" && Number(spread) > 0.1 ? "text-emerald-700" : "text-stone-500"}`}>{spread}</td>
+                  <td className="num px-4 py-1.5 text-right text-ink-2">
+                    {row.bestBid === null ? DASH : price(String(row.bestBid))}
+                  </td>
+                  <td className="num px-4 py-1.5 text-right text-ink-2">
+                    {row.bestAsk === null ? DASH : price(String(row.bestAsk))}
+                  </td>
+                  <td className={`num px-4 py-1.5 text-right ${spreadTone(row.spread)}`}>
+                    {spreadPct(row.spread)}
+                  </td>
+                  <td className="num px-4 py-1.5 text-right text-ink-3">{age(row.oldestAgeMs)}</td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
-    </section>
+    </Panel>
   );
-});
+}

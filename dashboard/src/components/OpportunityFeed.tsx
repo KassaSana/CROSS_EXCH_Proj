@@ -1,31 +1,113 @@
-import { memo } from "react";
 import { Opportunity } from "../api/client";
+import { Async } from "../lib/async";
+import { eventTime, spreadPct, usd } from "../lib/format";
+import { Panel } from "./Panel";
+import { Placeholder } from "./Placeholder";
 
 type Props = {
-  opportunities: Opportunity[];
+  opportunities: Async<Opportunity[]>;
+  onRetry: () => void;
 };
 
-export const OpportunityFeed = memo(function OpportunityFeed({ opportunities }: Props) {
+function spreadTone(value: string): string {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return "text-ink-3";
+  }
+  if (parsed >= 0.25) {
+    return "text-signal-hi";
+  }
+  if (parsed >= 0.1) {
+    return "text-signal";
+  }
+  return "text-ink-2";
+}
+
+export function OpportunityFeed({ opportunities, onRetry }: Props) {
+  if (opportunities.state === "failed") {
+    return (
+      <Placeholder
+        state="failed"
+        title="Could not load the opportunity feed"
+        detail={opportunities.error}
+        onRetry={onRetry}
+      />
+    );
+  }
+
+  const rows = opportunities.state === "ready" ? opportunities.data : [];
+
   return (
-    <section className="rounded-[2rem] border border-stone-300 bg-white/70 p-6 shadow-sm">
-      <div className="flex items-center justify-between">
-        <h2 className="font-display text-2xl text-ink">Recent Opportunities</h2>
-        <span className="text-sm text-stone-500">{opportunities.length} tracked</span>
+    <Panel
+      title="Recent opportunities"
+      meta={opportunities.state === "loading" ? "Loading" : `${rows.length} detected`}
+      className="overflow-hidden"
+    >
+      <div className="max-h-[28rem] overflow-y-auto">
+        <table className="min-w-full border-collapse text-xs">
+          <caption className="sr-only">
+            Most recent theoretical arbitrage opportunities, newest first, with the venue
+            to buy on, the venue to sell on, the spread and the theoretical profit.
+          </caption>
+          <thead className="sticky top-0 bg-panel">
+            <tr className="border-b border-line-soft text-left text-micro text-ink-3">
+              <th scope="col" className="px-4 py-2 font-normal">
+                Time
+              </th>
+              <th scope="col" className="px-4 py-2 font-normal">
+                Pair
+              </th>
+              <th scope="col" className="px-4 py-2 font-normal">
+                Route
+              </th>
+              <th scope="col" className="px-4 py-2 text-right font-normal">
+                Spread
+              </th>
+              <th scope="col" className="px-4 py-2 text-right font-normal">
+                Profit
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {opportunities.state === "loading" ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-6 text-ink-3">
+                  Loading recent opportunities.
+                </td>
+              </tr>
+            ) : null}
+            {opportunities.state === "ready" && rows.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-6 text-ink-3">
+                  No opportunities detected yet. Spreads this tight are the normal state
+                  for liquid pairs.
+                </td>
+              </tr>
+            ) : null}
+            {rows.map((row) => (
+              <tr
+                key={`${row.timestamp_ns}-${row.buy_exchange}-${row.sell_exchange}-${row.pair}`}
+                className="border-b border-line-soft/60 last:border-0"
+              >
+                <td className="num px-4 py-1.5 text-ink-3">{eventTime(row.timestamp_ns)}</td>
+                <th scope="row" className="px-4 py-1.5 text-left font-medium text-ink">
+                  {row.pair}
+                </th>
+                <td className="px-4 py-1.5 text-ink-2">
+                  {row.buy_exchange} <span className="text-ink-3">&rarr;</span>{" "}
+                  {row.sell_exchange}
+                </td>
+                <td className={`num px-4 py-1.5 text-right ${spreadTone(row.spread_pct)}`}>
+                  {spreadPct(row.spread_pct)}
+                </td>
+                <td className="num px-4 py-1.5 text-right text-ink-2">
+                  {usd(row.theoretical_profit_usd)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <div className="mt-5 space-y-3">
-        {opportunities.map((opportunity) => (
-          <div key={`${opportunity.timestamp_ns}-${opportunity.pair}-${opportunity.buy_exchange}-${opportunity.sell_exchange}`} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
-            <div className="flex items-center justify-between">
-              <strong>{opportunity.pair}</strong>
-              <span className="text-sm text-emerald-700">{opportunity.spread_pct}%</span>
-            </div>
-            <p className="mt-2 text-sm text-stone-600">
-              Buy on {opportunity.buy_exchange} at {opportunity.buy_price}, sell on {opportunity.sell_exchange} at {opportunity.sell_price}
-            </p>
-            <p className="mt-1 text-sm text-stone-500">Theoretical profit: ${opportunity.theoretical_profit_usd}</p>
-          </div>
-        ))}
-      </div>
-    </section>
+    </Panel>
   );
-});
+}

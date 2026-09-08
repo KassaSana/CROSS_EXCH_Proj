@@ -1,53 +1,42 @@
-import { useEffect, useState } from "react";
+import { DASH, nsToMs, uptime } from "../lib/format";
+import { useLive } from "../state/live";
+import { Panel } from "./Panel";
 
 type Props = {
   startedAtNs: string | null;
   onReset: () => void;
 };
 
-function formatUptime(seconds: number): string {
-  if (seconds < 0) return "0s";
-  const days = Math.floor(seconds / 86_400);
-  const hours = Math.floor((seconds % 86_400) / 3_600);
-  const minutes = Math.floor((seconds % 3_600) / 60);
-  const secs = seconds % 60;
-  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
-  if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
-  if (minutes > 0) return `${minutes}m ${secs}s`;
-  return `${secs}s`;
-}
-
 export function UptimeCard({ startedAtNs, onReset }: Props) {
-  const [now, setNow] = useState(() => Date.now());
+  // Borrows the one-second tick the live provider already runs.
+  const { nowMs } = useLive();
 
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  const startedAtMs =
-    startedAtNs === null ? null : Number(BigInt(startedAtNs) / 1_000_000n);
+  const startedAtMs = startedAtNs === null ? null : nsToMs(startedAtNs);
   const uptimeSeconds =
-    startedAtMs === null ? 0 : Math.max(0, Math.floor((now - startedAtMs) / 1_000));
-  const startedDisplay =
-    startedAtMs === null ? "—" : new Date(startedAtMs).toLocaleString();
+    startedAtMs === null ? 0 : Math.max(0, Math.floor((nowMs - startedAtMs) / 1_000));
 
   return (
-    <section className="rounded-[2rem] border border-stone-300 bg-gradient-to-r from-white to-amber-50 p-8 shadow-sm">
-      <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+    <Panel>
+      <div className="flex flex-wrap items-end justify-between gap-4 px-4 py-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.35em] text-stone-500">System Uptime</p>
-          <p className="mt-3 font-display text-5xl text-ink tabular-nums">{formatUptime(uptimeSeconds)}</p>
-          <p className="mt-2 text-sm text-stone-500">Running since {startedDisplay}</p>
+          <p className="text-micro text-ink-3">System uptime</p>
+          <p className="num mt-1.5 text-3xl font-medium text-ink">
+            {startedAtMs === null ? DASH : uptime(uptimeSeconds)}
+          </p>
+          <p className="mt-1 text-micro text-ink-3">
+            {startedAtMs === null
+              ? "Start time unavailable"
+              : `Running since ${new Date(startedAtMs).toLocaleString()}`}
+          </p>
         </div>
         <button
           type="button"
           onClick={onReset}
-          className="self-start rounded-2xl border border-stone-300 bg-white/80 px-5 py-2 text-sm uppercase tracking-[0.25em] text-stone-700 transition-colors hover:bg-white md:self-auto"
+          className="rounded border border-line px-3 py-1.5 text-xs text-ink-2 transition-colors hover:border-ink-3 hover:text-ink"
         >
-          Reset Timer
+          Reset timer
         </button>
       </div>
-    </section>
+    </Panel>
   );
 }
