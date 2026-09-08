@@ -1,24 +1,50 @@
 import { Stats } from "../api/client";
+import { Async } from "../lib/async";
+import { count, spreadPct, usd } from "../lib/format";
+import { Panel } from "./Panel";
+import { Placeholder } from "./Placeholder";
+import { Stat } from "./Stat";
 
 type Props = {
-  stats: Stats | null;
+  stats: Async<Stats>;
+  onRetry: () => void;
 };
 
-export function StatsCards({ stats }: Props) {
+export function StatsCards({ stats, onRetry }: Props) {
+  if (stats.state === "failed") {
+    return (
+      <Placeholder
+        state="failed"
+        title="Could not load hourly stats"
+        detail={stats.error}
+        onRetry={onRetry}
+      />
+    );
+  }
+
+  const data = stats.state === "ready" ? stats.data : null;
   const items = [
-    { label: "Opportunities / Hour", value: stats?.count ?? "..." },
-    { label: "Max Spread %", value: stats?.max_spread_pct ?? "..." },
-    { label: "Theoretical Profit", value: stats ? `$${stats.total_theoretical_profit_usd}` : "..." },
+    { label: "Opportunities (1h)", value: data === null ? null : count(data.count) },
+    { label: "Max spread (1h)", value: data === null ? null : spreadPct(data.max_spread_pct) },
+    {
+      label: "Theoretical profit (1h)",
+      value: data === null ? null : usd(data.total_theoretical_profit_usd),
+    },
   ];
 
   return (
-    <section className="grid gap-4 md:grid-cols-3">
-      {items.map((item) => (
-        <article key={item.label} className="rounded-3xl border border-stone-300 bg-white/70 p-5 shadow-sm">
-          <p className="text-xs uppercase tracking-[0.2em] text-stone-500">{item.label}</p>
-          <p className="mt-3 font-display text-3xl text-ink">{item.value}</p>
-        </article>
-      ))}
-    </section>
+    <Panel className="overflow-hidden">
+      <div className="grid gap-px bg-line-soft sm:grid-cols-3">
+        {items.map((item) => (
+          <Stat
+            key={item.label}
+            label={item.label}
+            value={
+              item.value === null ? <span className="text-base text-ink-3">Loading</span> : item.value
+            }
+          />
+        ))}
+      </div>
+    </Panel>
   );
 }
